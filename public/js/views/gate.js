@@ -1,8 +1,8 @@
 import { getMeta } from '../db.js';
 import { subscribe } from '../sync.js';
 import { onSiteVisits, expectedVisitors, findInvite } from '../visits.js';
-import { cameraAvailable, startScanner } from '../scanner.js';
-import { gateName, typeLabel } from '../config.js';
+import { cameraAvailable, startScanner, warnNoCamera } from '../scanner.js';
+import { postLabel, typeLabel } from '../config.js';
 import { esc, icon, toast, formatTime, timeAgo } from '../ui.js';
 import { runCheckin } from './checkin.js';
 
@@ -23,7 +23,8 @@ export default async function gate(root, ctx) {
     root.innerHTML = `
       <section class="gate-hero">
         <span class="eyebrow">${esc(config.site.name)}</span>
-        <h1>${esc(gateName(config, ctx.guard.gate))}</h1>
+        <h1>${esc(postLabel(config, ctx.guard))}</h1>
+        ${ctx.guard.post?.until ? `<p class="post-until">Temporary post until ${formatTime(ctx.guard.post.until)}</p>` : ''}
         <div class="gate-stats">
           <a href="#onsite"><strong>${onSite.length}</strong><span>on site</span></a>
           <div><strong>${expected.length}</strong><span>expected</span></div>
@@ -40,9 +41,14 @@ export default async function gate(root, ctx) {
         <button class="action action-primary" data-action="scan">
           ${icon('qr')}<strong>Scan pass</strong><small>QR code on visitor's phone</small>
         </button>
-        <button class="action" data-action="walkin">
-          ${icon('userPlus')}<strong>Walk-in</strong><small>Visitor without a pass</small>
-        </button>
+        <div class="action-stack">
+          <button class="action action-small" data-action="walkin">
+            ${icon('userPlus')}<span><strong>Walk-in</strong><small>No pass</small></span>
+          </button>
+          <button class="action action-small" data-action="temp">
+            ${icon('clock')}<span><strong>Temporary</strong><small>Issue short pass</small></span>
+          </button>
+        </div>
       </div>
 
       <h2 class="section-title">Expected visitors</h2>
@@ -131,7 +137,7 @@ export default async function gate(root, ctx) {
         });
       } catch {
         sheet.querySelector('.camera').hidden = true;
-        toast('Camera not available. Type the pass code instead.', 'warn');
+        warnNoCamera(toast, 'Camera not available. Type the pass code instead.');
       }
     }
     if (!stopCamera) form.code.focus();
@@ -148,6 +154,7 @@ export default async function gate(root, ctx) {
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'scan') openScanner();
     if (action === 'walkin') startFlow({ kind: 'walkin' });
+    if (action === 'temp') startFlow({ kind: 'temp' });
   });
 
   await render();

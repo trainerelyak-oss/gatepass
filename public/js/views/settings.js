@@ -1,21 +1,21 @@
 import { getMeta, setMeta, clearRecords, countPending } from '../db.js';
 import { subscribe, setSimulatedOffline, syncNow } from '../sync.js';
 import { esc, icon, timeAgo, toast } from '../ui.js';
-import { gateName } from '../config.js';
+import { postLabel } from '../config.js';
 
 export default async function settings(root, ctx) {
   const deviceId = await getMeta('deviceId');
   const cache = await getMeta('siteCache');
 
   root.innerHTML = `
-    <h1 class="page-title">Shift & device</h1>
+    <h1 class="page-title">Shift</h1>
 
     <section class="panel profile">
       <span class="profile-avatar">${icon('user')}</span>
       <div>
         <strong>${esc(ctx.guard.name)}</strong>
         <small>${esc(ctx.guard.id)} · on shift since ${new Date(ctx.guard.signedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
-        <small>${esc(gateName(ctx.config, ctx.guard.gate))}</small>
+        <small>${esc(postLabel(ctx.config, ctx.guard))}</small>
       </div>
     </section>
 
@@ -51,6 +51,8 @@ export default async function settings(root, ctx) {
     </section>
 
     <section class="stack">
+      <a class="btn btn-primary btn-block" href="#shift">${icon('clipboard')} End-of-shift report</a>
+      <a class="btn btn-secondary btn-block" href="#log">${icon('list')} Gate log</a>
       <button class="btn btn-ghost btn-block" data-action="signout">End shift / change post</button>
       <button class="btn btn-ghost btn-block danger-text" data-action="wipe">Erase records on this device</button>
     </section>

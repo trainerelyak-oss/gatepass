@@ -1,4 +1,5 @@
 import { pendingRecords, countPending, markSynced, getMeta, setMeta } from './db.js';
+import { registerDeviceKey } from './devicekey.js';
 
 const MAX_BATCH_BYTES = 3 * 1024 * 1024;
 const MAX_BATCH_RECORDS = 20;
@@ -39,8 +40,10 @@ export function isConnected() {
 
 function priority(record) {
   if (record.type === 'denied' || record.watchlist) return 0;
+  if (record.type === 'incident' && (record.severity === 'critical' || record.severity === 'high')) return 0;
+  if (record.type === 'spotcheck' && record.result !== 'ok') return 0;
   if (record.type === 'muster') return 1;
-  if (record.type === 'checkin') return 2;
+  if (record.type === 'checkin' || record.type === 'checkout' || record.type === 'incident') return 2;
   return 3;
 }
 
@@ -91,12 +94,27 @@ async function refreshPending() {
 
 async function deviceInfo() {
   const guard = await getMeta('guard');
-  return { deviceId: await getMeta('deviceId'), gate: guard?.gate || null, guardName: guard?.name || null };
+  return {
+    deviceId: await getMeta('deviceId'),
+    gate: guard?.gate || null,
+    postName: guard?.post?.name || null,
+    temporaryUntil: guard?.post?.until || null,
+    guardName: guard?.name || null
+  };
 }
 
 async function pullSiteCache() {
   const device = await deviceInfo();
-  const params = new URLSearchParams({ deviceId: device.deviceId || '', gate: device.gate || '', guard: device.guardName || '' });
+  try {
+    await registerDeviceKey(device);
+  } catch {}
+  const params = new URLSearchParams({
+    deviceId: device.deviceId || '',
+    gate: device.gate || '',
+    guard: device.guardName || '',
+    post: device.postName || '',
+    until: device.temporaryUntil || ''
+  });
   const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();

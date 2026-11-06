@@ -2,7 +2,7 @@ import { getMeta } from '../db.js';
 import { subscribe } from '../sync.js';
 import { saveRecord } from '../records.js';
 import { onSiteVisits } from '../visits.js';
-import { typeLabel } from '../config.js';
+import { typeLabel, zoneList } from '../config.js';
 import { esc, icon, toast, formatTime, timeAgo } from '../ui.js';
 
 export default async function onsite(root, ctx) {
@@ -34,7 +34,17 @@ export default async function onsite(root, ctx) {
             </button>
             ${open === v.visitId ? `
               <div class="visit-actions">
-                <button class="btn btn-primary btn-block" data-signout="${esc(v.visitId)}">${icon('logOut')} Sign out at Gate ${esc(ctx.guard.gate)}</button>
+                <p class="small"><strong>Zones:</strong> ${esc(zoneList(ctx.config, v.zones))}${v.escort ? ' · escort required' : ''}${v.permitNo ? ` · Permit ${esc(v.permitNo)}` : ''}${v.tempPass ? ` · Temporary pass until ${formatTime(v.tempPass.validTo)}` : ''}</p>
+                ${(v.items || []).length ? `
+                  <div class="return-list">
+                    <span class="small"><strong>Check before they leave</strong></span>
+                    ${v.items.map((item, i) => `
+                      <label>
+                        <input type="checkbox" data-item="${i}">
+                        <span>${item.kind === 'issued' ? 'Returned' : 'Leaving with'}: <strong>${esc(item.name)}</strong>${item.ref ? ` ${esc(item.ref)}` : ''}</span>
+                      </label>`).join('')}
+                  </div>` : ''}
+                <button class="btn btn-primary btn-block" data-signout="${esc(v.visitId)}">${icon('logOut')} Sign out here</button>
               </div>` : ''}
           </li>`).join('')
       : `<li class="empty">${query ? 'No one matches that search.' : 'No visitors on site.'}</li>`;
@@ -45,7 +55,10 @@ export default async function onsite(root, ctx) {
     const cache = await getMeta('siteCache');
     lastCache = cache?.fetchedAt || null;
     root.innerHTML = `
-      <h1 class="page-title">On site now <span class="count-pill">${visits.length}</span></h1>
+      <div class="page-head">
+        <h1 class="page-title">On site now <span class="count-pill">${visits.length}</span></h1>
+        <a class="btn btn-secondary" href="#spot">${icon('scan')} Spot check</a>
+      </div>
       <p class="muted small">Includes visitors from other gates as of the last sync (${timeAgo(cache?.fetchedAt)}).</p>
       <label class="search">
         ${icon('search')}
@@ -65,9 +78,23 @@ export default async function onsite(root, ctx) {
     if (signout) {
       const visit = visits.find(v => v.visitId === signout.dataset.signout);
       if (!visit) return;
+      const box = signout.closest('.visit');
+      const ticked = new Set([...box.querySelectorAll('[data-item]:checked')].map(i => Number(i.dataset.item)));
+      const items = visit.items || [];
+      const itemsMissing = items.filter((item, i) => item.kind === 'issued' && !ticked.has(i));
+      const itemsUnconfirmed = items.filter((item, i) => item.kind === 'declared' && !ticked.has(i));
+      if (itemsMissing.length && !confirm(`${itemsMissing.map(i => i.name).join(', ')} not returned. Sign out anyway? The control room will be alerted.`)) return;
       signout.disabled = true;
-      await saveRecord('checkout', { visitId: visit.visitId, name: visit.name, badge: visit.badge, gate: ctx.guard.gate });
-      toast(`${visit.name} signed out`, 'ok');
+      await saveRecord('checkout', {
+        visitId: visit.visitId,
+        name: visit.name,
+        badge: visit.badge,
+        gate: ctx.guard.gate,
+        itemsReturned: items.filter((item, i) => ticked.has(i)),
+        itemsMissing,
+        itemsUnconfirmed
+      });
+      toast(itemsMissing.length ? `${visit.name} signed out, items outstanding` : `${visit.name} signed out`, itemsMissing.length ? 'warn' : 'ok');
       open = null;
       visits = await onSiteVisits();
       root.querySelector('.count-pill').textContent = visits.length;

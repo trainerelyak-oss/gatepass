@@ -2,7 +2,7 @@ import { getMeta } from './db.js';
 
 const EARLY_ENTRY_MS = 30 * 60 * 1000;
 
-let importedKey = { id: null, key: null };
+const importedKeys = new Map();
 
 function fromBase64Url(value) {
   let s = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -26,28 +26,36 @@ export function cryptoAvailable() {
   return Boolean(globalThis.crypto?.subtle);
 }
 
-async function siteKey(cache) {
-  if (importedKey.id === cache.keyId) return importedKey.key;
-  const key = await crypto.subtle.importKey(
-    'jwk',
-    { ...cache.publicKey, ext: true },
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['verify']
-  );
-  importedKey = { id: cache.keyId, key };
+async function importKey(id, jwk) {
+  if (importedKeys.has(id)) return importedKeys.get(id);
+  const key = await crypto.subtle.importKey('jwk', { ...jwk, ext: true }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  importedKeys.set(id, key);
   return key;
+}
+
+async function signerKey(kind, keyId, cache) {
+  if (kind === 'pass') return cache?.publicKey ? { key: await importKey(cache.keyId, cache.publicKey), label: `site key ${cache.keyId}` } : null;
+  const own = await getMeta('deviceKey');
+  if (own?.keyId === keyId) return { key: await importKey(keyId, own.jwk), label: 'issued by this device' };
+  const known = cache?.deviceKeys?.find(k => k.keyId === keyId);
+  return known ? { key: await importKey(keyId, known.jwk), label: `issued at ${known.postName || `Gate ${known.gate}`}` } : null;
 }
 
 export function decodePass(token) {
   const parts = String(token || '').trim().split('.');
-  if (parts.length !== 3 || parts[0] !== 'GP1') return null;
+  if (parts.length !== 3 || !['GP1', 'GT1'].includes(parts[0])) return null;
   try {
     const p = JSON.parse(new TextDecoder().decode(fromBase64Url(parts[1])));
     return {
+      kind: parts[0] === 'GT1' ? 'temp' : 'pass',
+      keyId: p.k || null,
       body: `${parts[0]}.${parts[1]}`,
       signature: parts[2],
       pass: {
+        temporary: parts[0] === 'GT1',
+        zones: p.z || [],
+        escort: p.x === 1,
+        reason: p.r || null,
         id: p.i,
         name: p.n,
         type: p.t,
@@ -75,18 +83,24 @@ export async function verifyPass(token, siteId, now = Date.now()) {
   const cache = await getMeta('siteCache');
   const checks = [];
 
-  if (!cache?.publicKey) {
-    return { ok: false, pass, reason: 'This device has no site key yet. Connect once so it can verify passes offline.', checks };
-  }
   if (!cryptoAvailable()) {
     return { ok: false, pass, reason: 'Verification needs HTTPS. Open the app through https:// or localhost.', checks };
+  }
+  if (!cache?.publicKey && decoded.kind === 'pass') {
+    return { ok: false, pass, reason: 'This device has no site key yet. Connect once so it can verify passes offline.', checks };
+  }
+
+  const signer = await signerKey(decoded.kind, decoded.keyId, cache);
+  if (!signer) {
+    checks.push({ ok: false, label: 'Genuine pass', detail: 'Temporary pass from a device this gate has not synced with yet' });
+    return { ok: false, pass, reason: 'Cannot verify: issued by an unknown device. Call the issuing post or control room.', checks, unknownSigner: true };
   }
 
   let signed = false;
   try {
     signed = await crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
-      await siteKey(cache),
+      signer.key,
       fromBase64Url(decoded.signature),
       new TextEncoder().encode(decoded.body)
     );
@@ -94,8 +108,13 @@ export async function verifyPass(token, siteId, now = Date.now()) {
     signed = false;
   }
 
-  checks.push({ ok: signed, label: 'Genuine pass', detail: signed ? `Signature valid · key ${cache.keyId}` : 'Signature check failed. Pass is forged or has been edited' });
+  checks.push({ ok: signed, label: decoded.kind === 'temp' ? 'Genuine temporary pass' : 'Genuine pass', detail: signed ? `Signature valid · ${signer.label}` : 'Signature check failed. Pass is forged or has been edited' });
   if (!signed) return { ok: false, pass, reason: 'Forged or altered pass', checks };
+
+  if (cache?.revoked?.includes(pass.id)) {
+    checks.push({ ok: false, label: 'Not revoked', detail: 'Control room has revoked this pass' });
+    return { ok: false, pass, reason: 'Pass revoked by control room', checks };
+  }
 
   const siteOk = pass.siteId === siteId;
   checks.push({ ok: siteOk, label: 'Issued for this site', detail: siteOk ? pass.siteId : `Pass is for site ${pass.siteId}` });

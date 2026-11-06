@@ -90,14 +90,14 @@ export function describeRecord(record) {
     case 'checkin':
       return {
         icon: 'logIn',
-        tone: record.watchlist || record.idCheck === 'mismatch' ? 'warn' : 'ok',
-        title: `${record.name} signed in`,
+        tone: record.watchlist || record.idCheck === 'mismatch' || record.method === 'temp' ? 'warn' : 'ok',
+        title: `${record.name} signed in${record.method === 'temp' ? ' (temporary pass)' : ''}`,
         subtitle: [record.badge, record.visitorType, record.host].filter(Boolean).join(' · ')
       };
     case 'checkout':
       return {
         icon: 'logOut',
-        tone: 'neutral',
+        tone: record.itemsMissing?.length ? 'warn' : 'neutral',
         title: `${record.name} signed out`,
         subtitle: [record.badge, `Gate ${record.gate}`].filter(Boolean).join(' · ')
       };
@@ -108,6 +108,32 @@ export function describeRecord(record) {
         title: `Entry refused${record.name ? `: ${record.name}` : ''}`,
         subtitle: record.reason
       };
+    case 'spotcheck':
+      return {
+        icon: 'scan',
+        tone: record.result === 'ok' ? 'ok' : 'danger',
+        title: `Spot check: ${record.name || record.badge || 'unknown'}`,
+        subtitle: `${record.zoneName} · ${String(record.result).replace('_', ' ')}`
+      };
+    case 'incident':
+      return {
+        icon: 'alert',
+        tone: record.severity === 'critical' || record.severity === 'high' ? 'danger' : 'warn',
+        title: record.title,
+        subtitle: `${record.categoryLabel || record.category} · ${record.severity} · ${record.location || ''}`
+      };
+    case 'witness':
+      return { icon: 'user', tone: 'neutral', title: `Witness statement: ${record.name}`, subtitle: record.role };
+    case 'evidence':
+      return { icon: 'shield', tone: 'neutral', title: `Evidence ${record.ref}: ${record.description}`, subtitle: record.custody };
+    case 'incident_note':
+      return { icon: 'list', tone: 'neutral', title: record.source === 'control' ? 'Control room update' : 'Incident update', subtitle: [record.status, record.text].filter(Boolean).join(' · ') };
+    case 'inspection': {
+      const issues = (record.faults?.length || 0) + (record.shortages?.length || 0);
+      return { icon: 'clipboard', tone: issues ? 'warn' : 'ok', title: record.checkName, subtitle: issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'All clear' };
+    }
+    case 'shift_report':
+      return { icon: 'clipboard', tone: 'neutral', title: `Shift report: ${record.guardName || ''}`, subtitle: `${record.summary?.signIns ?? 0} in · ${record.summary?.signOuts ?? 0} out · ${record.summary?.incidents?.length ?? 0} incidents` };
     case 'muster':
       return {
         icon: 'siren',
@@ -132,7 +158,36 @@ export function recordDetails(record) {
     if (record.idCheck === 'mismatch') rows.push('<p class="detail-line detail-warn">ID did not match the pass. Admitted on override.</p>');
     if (record.watchlist) rows.push(`<p class="detail-line detail-warn">Watchlist match (${esc(record.watchlist.level)}). Control room notified.</p>`);
     if (record.induction) rows.push(`<p class="detail-line"><strong>Safety induction:</strong> acknowledged ${record.induction.items.length} rules</p>`);
+    if (record.permitNo) line('Permit to work', record.permitNo);
+    if (record.zones?.length) line('Zones', record.zones.join(', ') + (record.escort ? ' (escort required)' : ''));
+    if (record.items?.length) line('Items', record.items.map(i => `${i.kind === 'issued' ? 'issued' : 'declared'}: ${i.name}${i.ref ? ` ${i.ref}` : ''}`).join(', '));
+    if (record.tempPass) line('Temporary pass', `${record.tempPass.id} · ${record.tempPass.reason} · until ${formatTime(record.tempPass.validTo)}`);
     if (record.induction?.signature) rows.push(`<img class="detail-signature" src="${esc(record.induction.signature)}" alt="Signature">`);
+  }
+  if (record.type === 'checkout' && record.itemsMissing?.length) {
+    rows.push(`<p class="detail-line detail-warn"><strong>Not returned:</strong> ${esc(record.itemsMissing.map(i => i.name).join(', '))}</p>`);
+  }
+  if (record.type === 'spotcheck') line('Result', record.reason);
+  if (record.type === 'incident') {
+    line('Location', record.location);
+    if (record.description) rows.push(`<p class="detail-text">${esc(record.description)}</p>`);
+    if (record.people?.length) line('Involved', record.people.map(p => `${p.name} (${p.badge})`).join(', '));
+  }
+  if (record.type === 'witness') {
+    rows.push(`<p class="detail-text">“${esc(record.statement)}”</p>`);
+    if (record.signature) rows.push(`<img class="detail-signature" src="${esc(record.signature)}" alt="Signature">`);
+  }
+  if (record.type === 'evidence') {
+    line('Found', record.foundAt);
+    if (record.photoIntegrity?.length) line('Photo integrity', record.photoIntegrity.join(', '));
+  }
+  if (record.type === 'inspection') {
+    for (const f of record.faults || []) rows.push(`<p class="detail-line detail-warn">Fault: ${esc(f.label)}${f.note ? ` (${esc(f.note)})` : ''}</p>`);
+    for (const s of record.shortages || []) rows.push(`<p class="detail-line detail-warn">Short: ${esc(s.label)} ${s.count}/${s.expected}</p>`);
+  }
+  if (record.type === 'shift_report') {
+    if (record.notes) rows.push(`<p class="detail-text">${esc(record.notes)}</p>`);
+    line('Handed over to', record.incomingOfficer);
   }
   if (record.type === 'muster' && record.missing?.length) {
     rows.push(`<p class="detail-line detail-warn"><strong>Unaccounted:</strong> ${record.missing.map(m => esc(m.name)).join(', ')}</p>`);

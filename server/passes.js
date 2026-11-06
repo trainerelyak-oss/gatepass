@@ -44,6 +44,8 @@ function issuePass(key, invite, siteId) {
     m: invite.multiEntry ? 1 : 0
   };
   if (invite.company) payload.c = invite.company;
+  if (invite.zones?.length) payload.z = invite.zones;
+  if (invite.escort) payload.x = 1;
   if (invite.partialId) payload.p = invite.partialId;
   const body = `GP1.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
   return `${body}.${key.sign(body)}`;

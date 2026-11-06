@@ -22,6 +22,11 @@ export async function allVisits() {
       passId: c.passId,
       passValidTo: c.passValidTo,
       multiEntry: c.multiEntry,
+      zones: c.zones || [],
+      escort: Boolean(c.escort),
+      items: c.items || [],
+      permitNo: c.permitNo || null,
+      tempPass: c.tempPass ? { id: c.tempPass.id, validTo: c.tempPass.validTo, reason: c.tempPass.reason } : null,
       checkinAt: c.createdAt,
       checkinGate: c.gate,
       status: 'on_site',
@@ -38,6 +43,11 @@ export async function allVisits() {
   }
 
   return [...visits.values()].sort((a, b) => b.checkinAt.localeCompare(a.checkinAt));
+}
+
+export async function findVisitByBadge(badge) {
+  const wanted = String(badge || '').trim().toUpperCase();
+  return (await allVisits()).find(v => String(v.badge || '').toUpperCase() === wanted && v.status === 'on_site') || null;
 }
 
 export async function onSiteVisits() {

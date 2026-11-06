@@ -12,6 +12,7 @@
   <link rel="apple-touch-icon" href="/icons/icon.svg">
   <link rel="stylesheet" href="/css/app.css">
   <script src="/vendor/jsQR.js" defer></script>
+  <script src="/vendor/qrcode.js" defer></script>
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>
@@ -24,7 +25,7 @@
       <button id="status" class="status-pill" type="button" data-tone="checking">
         <span class="dot"></span><span class="label">Checking…</span>
       </button>
-      <a href="#settings" class="icon-btn" aria-label="Settings" data-icon="user"></a>
+      <a href="#settings" class="icon-btn profile-btn" aria-label="Shift and settings"><span data-icon="user"></span><b class="tab-badge" data-badge="log" hidden></b></a>
     </div>
   </header>
 
@@ -39,8 +40,9 @@
   <nav class="tabbar" aria-label="Main">
     <a href="#gate" data-route="gate"><span data-icon="qr"></span>Gate</a>
     <a href="#onsite" data-route="onsite"><span data-icon="users"></span>On site<b class="tab-badge tab-badge-neutral" data-badge="onsite" hidden></b></a>
+    <a href="#incidents" data-route="incidents"><span data-icon="alert"></span>Incidents</a>
+    <a href="#checks" data-route="checks"><span data-icon="clipboard"></span>Checks</a>
     <a href="#muster" data-route="muster" class="tab-muster"><span data-icon="siren"></span>Evacuate</a>
-    <a href="#log" data-route="log"><span data-icon="list"></span>Log<b class="tab-badge" data-badge="log" hidden></b></a>
   </nav>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>

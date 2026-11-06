@@ -4,8 +4,21 @@ import { allVisits, nextBadge } from '../visits.js';
 import { mountPhotoPicker } from '../photos.js';
 import { mountSignaturePad } from '../signature.js';
 import { isConnected } from '../sync.js';
-import { typeLabel } from '../config.js';
+import { typeLabel, zoneList, zonePicker, isRestricted } from '../config.js';
+import { signTempPass } from '../devicekey.js';
+import { qrSvg } from '../qr.js';
 import { esc, icon, screen, toast, formatTime, formatDateTime } from '../ui.js';
+
+const TEMP_CODE = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function tempCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(5));
+  return `T${[...bytes].map(b => TEMP_CODE[b % TEMP_CODE.length]).join('')}`;
+}
+
+function checkedValues(root, name) {
+  return [...root.querySelectorAll(`input[name="${name}"]:checked`)].map(i => i.value);
+}
 
 function checkList(checks) {
   return `
@@ -26,6 +39,7 @@ function passSummary(config, pass) {
       ${pass.company ? `<div><dt>Company</dt><dd>${esc(pass.company)}</dd></div>` : ''}
       <div><dt>Visiting</dt><dd>${esc(pass.host)}</dd></div>
       <div><dt>Valid</dt><dd>${formatTime(pass.validFrom)} – ${formatTime(pass.validTo)}</dd></div>
+      <div><dt>Zones</dt><dd>${esc(zoneList(config, pass.zones))}${pass.escort ? ' · <strong>escort required</strong>' : ''}</dd></div>
       <div><dt>Pass</dt><dd class="mono">${esc(pass.id)} · ${pass.multiEntry ? 'multi-entry' : 'single entry'}</dd></div>
     </dl>`;
 }
@@ -146,6 +160,8 @@ async function fromPass(root, ctx, source) {
     passId: pass.id,
     passValidTo: pass.validTo,
     multiEntry: pass.multiEntry,
+    zones: pass.zones?.length ? pass.zones : config.defaultZones?.[pass.type] || [],
+    escort: pass.escort,
     method: 'pass',
     scanMethod: source.method,
     idCheck,
@@ -153,15 +169,19 @@ async function fromPass(root, ctx, source) {
   };
 }
 
-async function walkIn(root, ctx) {
+async function walkIn(root, ctx, temporary = false) {
   const { config } = ctx;
   let picker;
   let visitor = null;
+  const maxHours = config.tempAccess?.maxHours || 4;
+  const durations = [1, 2, 4, 8].filter(h => h <= maxHours);
 
   const step = await screen(root, `
     <button class="back-link" data-step="cancel">← Back</button>
-    <h1 class="page-title">Walk-in visitor</h1>
-    <p class="muted">For visitors without a pass. Works offline.</p>
+    <h1 class="page-title">${temporary ? 'Temporary access' : 'Walk-in visitor'}</h1>
+    <p class="muted">${temporary
+      ? `Issue a short-term pass signed by this device. Other gates can verify it offline. The control room reviews every temporary pass after sync.`
+      : 'For visitors without a pass. Works offline.'}</p>
     <form class="stack" id="walkin" onsubmit="return false">
       <label class="field"><span>Full name</span><input name="fullname" autocomplete="off" placeholder="As shown on ID"></label>
       <label class="field">
@@ -177,6 +197,21 @@ async function walkIn(root, ctx) {
       </fieldset>
       <label class="field"><span>Company <em>optional</em></span><input name="company" autocomplete="off"></label>
       <label class="field"><span>Visiting (person / unit)</span><input name="host" autocomplete="off" placeholder="e.g. Acme Pte Ltd, #12-03"></label>
+      ${temporary ? `
+        <label class="field"><span>Reason</span>
+          <select name="reason">${(config.tempAccess?.reasons || ['Other']).map(r => `<option>${esc(r)}</option>`).join('')}</select>
+        </label>
+        <fieldset class="field">
+          <legend>Valid for</legend>
+          <div class="type-picker">
+            ${durations.map((h, i) => `<label><input type="radio" name="hours" value="${h}" ${i === durations.length - 1 ? 'checked' : ''}><span>${h} hour${h > 1 ? 's' : ''}</span></label>`).join('')}
+          </div>
+        </fieldset>` : ''}
+      <fieldset class="field">
+        <legend>Allowed zones</legend>
+        <div data-zones>${zonePicker(config, config.defaultZones?.[config.visitorTypes[0].id] || [])}</div>
+      </fieldset>
+      <label class="check-row"><input type="checkbox" name="escort"> Must be escorted at all times</label>
       <label class="field"><span>Vehicle no. <em>optional</em></span><input name="vehicle" autocomplete="off" autocapitalize="characters"></label>
       <div class="field"><span>Photo <em>optional</em></span><div data-photos></div></div>
     </form>
@@ -185,6 +220,14 @@ async function walkIn(root, ctx) {
     onMount: r => {
       picker = mountPhotoPicker(r.querySelector('[data-photos]'), { max: 1 });
       r.querySelector('[name=fullname]').focus({ preventScroll: true });
+      const syncEscort = () => {
+        const restricted = checkedValues(r, 'zones').some(z => isRestricted(config, z));
+        if (restricted) r.querySelector('[name=escort]').checked = true;
+      };
+      r.querySelectorAll('input[name=type]').forEach(input => input.addEventListener('change', () => {
+        r.querySelector('[data-zones]').innerHTML = zonePicker(config, config.defaultZones?.[input.value] || []);
+      }));
+      r.querySelector('[data-zones]').addEventListener('change', syncEscort);
     },
     validate: (s, r) => {
       if (s === 'cancel') return true;
@@ -195,7 +238,13 @@ async function walkIn(root, ctx) {
       if (!name) return toast('Enter the visitor\'s name', 'warn'), false;
       if (!isPartialId(partialId)) return toast('ID must be last 3 digits and letter, e.g. 567A', 'warn'), false;
       if (!host) return toast('Who are they visiting?', 'warn'), false;
+      const zones = checkedValues(r, 'zones');
+      if (!zones.length) return toast('Pick at least one zone', 'warn'), false;
       visitor = {
+        zones,
+        escort: form.escort.checked,
+        tempReason: temporary ? form.reason.value : null,
+        tempHours: temporary ? Number(form.hours.value) : null,
         name,
         partialId,
         visitorType: form.type.value,
@@ -203,7 +252,7 @@ async function walkIn(root, ctx) {
         host,
         vehicle: form.vehicle.value.trim().toUpperCase() || null,
         passId: null,
-        method: 'walkin',
+        method: temporary ? 'temp' : 'walkin',
         idCheck: 'recorded',
         photos: picker.photos
       };
@@ -214,8 +263,65 @@ async function walkIn(root, ctx) {
   return step === 'cancel' ? null : visitor;
 }
 
+async function itemsStep(root, ctx, visitor) {
+  const presets = ctx.config.itemPresets || { issued: [], declared: [] };
+  const items = [];
+
+  const renderItems = r => {
+    r.querySelector('.item-list').innerHTML = items.length
+      ? items.map((item, i) => `
+          <li class="item item-${item.kind}">
+            <span class="item-kind">${item.kind === 'issued' ? 'Issued' : 'Declared'}</span>
+            <strong>${esc(item.name)}</strong>
+            <input data-ref="${i}" value="${esc(item.ref || '')}" placeholder="${item.kind === 'issued' ? 'Card / tag no.' : 'Serial / description'}" autocomplete="off">
+            <button type="button" class="item-remove" data-remove="${i}" aria-label="Remove">${icon('x')}</button>
+          </li>`).join('')
+      : '<li class="empty small">Nothing recorded yet.</li>';
+  };
+
+  const step = await screen(root, `
+    <span class="eyebrow">${esc(visitor.name)}</span>
+    <h1 class="page-title">Items</h1>
+    <p class="muted">Record anything handed to the visitor, and equipment they're bringing in. Both are checked again at sign-out.</p>
+    <div class="field">
+      <span>Issue to visitor</span>
+      <div class="chip-row">${presets.issued.map(name => `<button type="button" class="chip" data-add="issued" data-name="${esc(name)}">+ ${esc(name)}</button>`).join('')}</div>
+    </div>
+    <div class="field">
+      <span>Visitor is bringing in</span>
+      <div class="chip-row">${presets.declared.map(name => `<button type="button" class="chip" data-add="declared" data-name="${esc(name)}">+ ${esc(name)}</button>`).join('')}</div>
+    </div>
+    <ul class="item-list"></ul>
+    <button class="btn btn-primary btn-block btn-large" data-step="continue">Continue</button>
+  `, {
+    onMount: r => {
+      renderItems(r);
+      r.addEventListener('click', event => {
+        const add = event.target.closest('[data-add]');
+        if (add) {
+          items.push({ kind: add.dataset.add, name: add.dataset.name, ref: '' });
+          renderItems(r);
+          r.querySelector(`[data-ref="${items.length - 1}"]`)?.focus();
+          return;
+        }
+        const remove = event.target.closest('[data-remove]');
+        if (remove) {
+          items.splice(Number(remove.dataset.remove), 1);
+          renderItems(r);
+        }
+      });
+      r.addEventListener('input', event => {
+        const ref = event.target.closest('[data-ref]');
+        if (ref) items[Number(ref.dataset.ref)].ref = ref.value.trim();
+      });
+    }
+  });
+  return step === 'continue' ? items : [];
+}
+
 async function induction(root, ctx, visitor) {
   let pad;
+  let permitNo = null;
   const step = await screen(root, `
     <span class="eyebrow">${icon('hardhat')} Contractor safety induction</span>
     <h1 class="page-title">${esc(visitor.name)}</h1>
@@ -225,6 +331,11 @@ async function induction(root, ctx, visitor) {
         <li><label><input type="checkbox" data-rule="${i}"><span>${esc(rule)}</span></label></li>`).join('')}
     </ul>
     <p class="muted small">Assembly point: <strong>${esc(ctx.config.assemblyPoint)}</strong></p>
+    <label class="field">
+      <span>Permit-to-work no.</span>
+      <input name="permit" autocomplete="off" autocapitalize="characters" placeholder="e.g. PTW-2026-0412">
+      <small class="muted">Required for contractors working on site.</small>
+    </label>
     <div class="field">
       <span>Contractor signature</span>
       <div class="signature">
@@ -244,16 +355,18 @@ async function induction(root, ctx, visitor) {
       const remaining = r.querySelectorAll('.induction input:not(:checked)').length;
       if (remaining) return toast(`${remaining} rule${remaining > 1 ? 's' : ''} not confirmed`, 'warn'), false;
       if (pad.empty) return toast('Contractor needs to sign', 'warn'), false;
+      permitNo = r.querySelector('[name=permit]').value.trim().toUpperCase();
+      if (!permitNo) return toast('Enter the permit-to-work number', 'warn'), false;
       return true;
     }
   });
 
   if (step === 'cancel') return null;
-  return { items: ctx.config.induction, acknowledgedAt: new Date().toISOString(), signature: pad.toDataURL() };
+  return { items: ctx.config.induction, acknowledgedAt: new Date().toISOString(), signature: pad.toDataURL(), permitNo };
 }
 
 export async function runCheckin(root, ctx, source) {
-  const visitor = source.kind === 'pass' ? await fromPass(root, ctx, source) : await walkIn(root, ctx);
+  const visitor = source.kind === 'pass' ? await fromPass(root, ctx, source) : await walkIn(root, ctx, source.kind === 'temp');
   if (!visitor) return;
 
   const hit = await checkWatchlist(visitor.name, visitor.partialId);
@@ -300,12 +413,47 @@ export async function runCheckin(root, ctx, source) {
     if (!inductionRecord) return;
   }
 
+  const items = await itemsStep(root, ctx, visitor);
+
+  let tempPass = null;
+  if (visitor.method === 'temp') {
+    const now = Date.now();
+    const id = tempCode();
+    const validTo = new Date(now + visitor.tempHours * 60 * 60 * 1000);
+    try {
+      const signed = await signTempPass({
+        i: id,
+        n: visitor.name,
+        t: visitor.visitorType,
+        h: visitor.host,
+        s: ctx.config.site.id,
+        f: Math.floor(now / 1000),
+        e: Math.floor(validTo.getTime() / 1000),
+        m: 0,
+        z: visitor.zones,
+        ...(visitor.escort ? { x: 1 } : {}),
+        p: visitor.partialId,
+        r: visitor.tempReason
+      });
+      tempPass = { id, token: signed.token, keyId: signed.keyId, reason: visitor.tempReason, validTo: validTo.toISOString() };
+    } catch (err) {
+      toast(err.message, 'error');
+      return;
+    }
+  }
+
+  const { tempReason, tempHours, ...fields } = visitor;
   const badge = await nextBadge(ctx.guard.gate);
   const record = await saveRecord('checkin', {
     visitId: uid(),
     badge,
     gate: ctx.guard.gate,
-    ...visitor,
+    ...fields,
+    passId: tempPass ? tempPass.id : fields.passId,
+    passValidTo: tempPass ? tempPass.validTo : fields.passValidTo,
+    tempPass,
+    items,
+    permitNo: inductionRecord?.permitNo || null,
     watchlist: hit || null,
     induction: inductionRecord
   });
@@ -320,7 +468,15 @@ export async function runCheckin(root, ctx, source) {
       <span>Visitor badge</span>
       <strong>${esc(badge)}</strong>
       <small>Visiting ${esc(record.host)} · ${formatDateTime(record.createdAt)}</small>
+      <small>Zones: ${esc(zoneList(ctx.config, record.zones))}${record.escort ? ' · <strong>escort required</strong>' : ''}</small>
+      ${items.filter(i => i.kind === 'issued').length ? `<small>Issued: ${esc(items.filter(i => i.kind === 'issued').map(i => i.ref ? `${i.name} ${i.ref}` : i.name).join(', '))}</small>` : ''}
     </section>
+    ${tempPass ? `
+      <section class="panel temp-pass">
+        <span class="eyebrow">Temporary pass ${esc(tempPass.id)} · until ${formatTime(tempPass.validTo)}</span>
+        <div class="temp-qr">${qrSvg(tempPass.token)}</div>
+        <p class="muted small">Ask the visitor to photograph this QR. Officers can scan it inside the building or at another gate, even offline.</p>
+      </section>` : ''}
     <p class="sync-note ${record.recordedOffline ? 'is-offline' : ''}">
       ${icon(record.recordedOffline ? 'cloudOff' : 'check')}
       ${record.recordedOffline ? 'Saved on this device. It will reach the control room when the connection is back.' : 'Uploading to the control room now.'}

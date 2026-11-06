@@ -51,6 +51,8 @@ function loadDb() {
     records: data.records || {},
     invites: data.invites || {},
     devices: data.devices || {},
+    deviceKeys: data.deviceKeys || {},
+    reviews: data.reviews || {},
     salt: data.salt || crypto.randomBytes(16).toString('hex')
   };
 }
@@ -77,6 +79,8 @@ function touchDevice(info, at) {
   db.devices[info.deviceId] = {
     deviceId: info.deviceId,
     gate: info.gate || existing.gate || null,
+    postName: info.postName || existing.postName || null,
+    temporaryUntil: info.temporaryUntil || null,
     guardName: info.guardName || existing.guardName || null,
     lastSeenAt: at,
     lastUploadAt: existing.lastUploadAt || null
@@ -123,20 +127,27 @@ function readBody(req) {
 }
 
 async function storePhotos(record) {
-  if (!Array.isArray(record.photos)) return [];
-  const stored = [];
+  if (!Array.isArray(record.photos)) return { photos: [], integrity: [] };
+  const photos = [];
+  const integrity = [];
   for (const [index, photo] of record.photos.entries()) {
     const match = typeof photo === 'string' && photo.match(/^data:image\/(jpeg|png|webp);base64,(.+)$/);
     if (!match) {
-      if (typeof photo === 'string' && photo.startsWith('/photos/')) stored.push(photo);
+      if (typeof photo === 'string' && photo.startsWith('/photos/')) photos.push(photo);
       continue;
     }
+    const bytes = Buffer.from(match[2], 'base64');
     const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
     const name = `${record.id.replace(/[^a-zA-Z0-9-]/g, '')}-${index}.${ext}`;
-    await fsp.writeFile(path.join(PHOTO_DIR, name), Buffer.from(match[2], 'base64'));
-    stored.push(`/photos/${name}`);
+    await fsp.writeFile(path.join(PHOTO_DIR, name), bytes);
+    photos.push(`/photos/${name}`);
+    const expected = record.photoHashes?.[index];
+    if (expected) {
+      const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+      integrity.push(actual === expected ? 'verified' : 'mismatch');
+    }
   }
-  return stored;
+  return { photos, integrity };
 }
 
 async function handleSync(req, res) {
@@ -162,10 +173,12 @@ async function handleSync(req, res) {
       continue;
     }
     const { syncStatus, syncedAt, ...clean } = record;
+    const { photos, integrity } = await storePhotos(record);
     db.records[record.id] = {
       ...clean,
       revision,
-      photos: await storePhotos(record),
+      photos,
+      ...(integrity.length ? { photoIntegrity: integrity } : {}),
       deviceId: record.deviceId || body.deviceId || null,
       receivedAt: existing ? existing.receivedAt : receivedAt,
       updatedAt: receivedAt
@@ -186,8 +199,11 @@ function handleBootstrap(url, res) {
   touchDevice({
     deviceId: url.searchParams.get('deviceId'),
     gate: url.searchParams.get('gate'),
+    postName: url.searchParams.get('post'),
+    temporaryUntil: url.searchParams.get('until'),
     guardName: url.searchParams.get('guard')
   }, now.toISOString());
+  const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const state = currentState();
   sendJson(res, 200, {
@@ -197,10 +213,28 @@ function handleBootstrap(url, res) {
     watchlist: watchlist.public,
     invites: state.invites
       .filter(i => i.validTo > now.toISOString())
-      .map(({ id, name, type, company, host, validFrom, validTo, multiEntry, token }) => ({ id, name, type, company, host, validFrom, validTo, multiEntry, token })),
+      .map(({ id, name, type, company, host, validFrom, validTo, multiEntry, zones, escort, token }) => ({ id, name, type, company, host, validFrom, validTo, multiEntry, zones, escort, token })),
     visits: state.visits
       .filter(v => v.status === 'on_site' || v.checkinAt > dayAgo)
-      .map(({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, checkinAt, checkinGate, status, checkoutAt, checkoutGate }) => ({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, checkinAt, checkinGate, status, checkoutAt, checkoutGate }))
+      .map(({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass, checkinAt, checkinGate, status, checkoutAt, checkoutGate }) => ({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass: tempPass && { id: tempPass.id, validTo: tempPass.validTo, reason: tempPass.reason, review: tempPass.review }, checkinAt, checkinGate, status, checkoutAt, checkoutGate })),
+    deviceKeys: Object.values(db.deviceKeys).map(({ keyId, deviceId, jwk, gate, postName }) => ({ keyId, deviceId, jwk, gate, postName })),
+    revoked: Object.entries(db.reviews).filter(([, r]) => r.decision === 'revoked').map(([id]) => id),
+    incidents: state.incidents
+      .filter(i => i.currentStatus !== 'closed' || i.updatedAt > threeDaysAgo)
+      .map(i => ({
+        incidentId: i.incidentId,
+        title: i.title,
+        category: i.category,
+        severity: i.severity,
+        location: i.location,
+        gate: i.gate,
+        guardName: i.guardName,
+        createdAt: i.createdAt,
+        currentStatus: i.currentStatus,
+        witnessCount: i.witnesses.length,
+        evidenceCount: i.evidence.length,
+        notes: i.notes.map(n => ({ id: n.id, text: n.text, status: n.status || null, author: n.guardName, source: n.source || 'device', createdAt: n.createdAt }))
+      }))
   });
 }
 
@@ -217,6 +251,8 @@ async function handleCreateInvite(req, res) {
   const validFrom = new Date(body.validFrom || Date.now());
   const validTo = new Date(body.validTo || Date.now() + 8 * 60 * 60 * 1000);
   const partialId = String(body.partialId || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  const zoneIds = new Set(site.zones.map(z => z.id));
+  const zones = (Array.isArray(body.zones) ? body.zones : site.defaultZones[type] || []).filter(z => zoneIds.has(z));
 
   if (!name || !host) return sendJson(res, 400, { error: 'Visitor name and host are required' });
   if (isNaN(validFrom) || isNaN(validTo) || validTo <= validFrom) return sendJson(res, 400, { error: 'Invalid visit window' });
@@ -235,12 +271,88 @@ async function handleCreateInvite(req, res) {
     validFrom: validFrom.toISOString(),
     validTo: validTo.toISOString(),
     multiEntry: Boolean(body.multiEntry),
+    zones,
+    escort: Boolean(body.escort),
     createdAt: new Date().toISOString()
   };
   invite.token = issuePass(signingKey, invite, site.site.id);
   db.invites[id] = invite;
   await persist();
   sendJson(res, 201, invite);
+}
+
+async function readJson(req, res) {
+  try {
+    return JSON.parse((await readBody(req)) || '{}');
+  } catch {
+    sendJson(res, 400, { error: 'Invalid JSON' });
+    return null;
+  }
+}
+
+async function handleDeviceKey(req, res) {
+  const body = await readJson(req, res);
+  if (!body) return;
+  const jwk = body.jwk;
+  if (!body.deviceId || !body.keyId || !jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) {
+    return sendJson(res, 400, { error: 'Invalid device key' });
+  }
+  db.deviceKeys[body.keyId] = {
+    keyId: String(body.keyId).slice(0, 32),
+    deviceId: String(body.deviceId).slice(0, 64),
+    jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y },
+    gate: body.gate || null,
+    postName: body.postName || null,
+    registeredAt: new Date().toISOString()
+  };
+  await persist();
+  sendJson(res, 201, { ok: true });
+}
+
+async function handleReview(req, res) {
+  const body = await readJson(req, res);
+  if (!body) return;
+  if (!body.passId || !['approved', 'revoked'].includes(body.decision)) {
+    return sendJson(res, 400, { error: 'passId and decision (approved | revoked) required' });
+  }
+  db.reviews[body.passId] = {
+    decision: body.decision,
+    note: String(body.note || '').slice(0, 300) || null,
+    by: String(body.by || 'Control room').slice(0, 60),
+    at: new Date().toISOString()
+  };
+  await persist();
+  sendJson(res, 200, db.reviews[body.passId]);
+}
+
+async function handleIncidentNote(req, res, incidentId) {
+  const body = await readJson(req, res);
+  if (!body) return;
+  const text = String(body.text || '').trim().slice(0, 2000);
+  const status = ['open', 'investigating', 'escalated', 'closed'].includes(body.status) ? body.status : null;
+  if (!text && !status) return sendJson(res, 400, { error: 'Add a note or change the status' });
+  const incident = Object.values(db.records).find(r => r.type === 'incident' && r.incidentId === incidentId);
+  if (!incident) return sendJson(res, 404, { error: 'Incident not found' });
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  db.records[id] = {
+    id,
+    type: 'incident_note',
+    incidentId,
+    text,
+    status,
+    source: 'control',
+    guardName: String(body.by || 'Control room').slice(0, 60),
+    gate: null,
+    createdAt: now,
+    receivedAt: now,
+    updatedAt: now,
+    revision: 1,
+    recordedOffline: false,
+    photos: []
+  };
+  await persist();
+  sendJson(res, 201, db.records[id]);
 }
 
 function handleRecords(url, res) {
@@ -295,6 +407,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/invites' && req.method === 'POST') {
       return await handleCreateInvite(req, res);
+    }
+    if (pathname === '/api/devices/key' && req.method === 'POST') {
+      return await handleDeviceKey(req, res);
+    }
+    if (pathname === '/api/reviews' && req.method === 'POST') {
+      return await handleReview(req, res);
+    }
+    const noteMatch = pathname.match(/^\/api\/incidents\/([\w-]+)\/notes$/);
+    if (noteMatch && req.method === 'POST') {
+      return await handleIncidentNote(req, res, noteMatch[1]);
     }
     if (pathname.startsWith('/api/')) {
       return sendJson(res, 404, { error: 'Unknown endpoint' });

@@ -5,6 +5,20 @@
     { "id": "B", "name": "Gate B · Loading bay" },
     { "id": "C", "name": "Gate C · Carpark" }
   ],
+  "zones": [
+    { "id": "common", "name": "Lobby & common areas", "restricted": false },
+    { "id": "office", "name": "Office floors (L2–L12)", "restricted": false },
+    { "id": "loading", "name": "Loading bay", "restricted": false },
+    { "id": "plant", "name": "Plant room (L4)", "restricted": true },
+    { "id": "server", "name": "Server room (L3)", "restricted": true },
+    { "id": "roof", "name": "Rooftop", "restricted": true }
+  ],
+  "defaultZones": {
+    "visitor": ["common", "office"],
+    "contractor": ["common", "loading"],
+    "delivery": ["common", "loading"],
+    "interview": ["common", "office"]
+  },
   "visitorTypes": [
     { "id": "visitor", "label": "Visitor" },
     { "id": "contractor", "label": "Contractor" },
@@ -16,6 +30,64 @@
     "I will wear a safety helmet, vest and safety boots in work areas",
     "I will not start hot work without a valid permit",
     "I will sign out at a gate before leaving the site"
+  ],
+  "itemPresets": {
+    "issued": ["Access card", "Visitor lanyard", "Keys", "Radio", "Safety helmet", "Safety vest"],
+    "declared": ["Laptop", "Power tools", "Ladder", "Camera", "Hard drive / USB"]
+  },
+  "tempAccess": {
+    "maxHours": 4,
+    "reasons": ["Forgot or lost pass", "Host not reachable", "Urgent repair / callout", "Emergency services", "Other"]
+  },
+  "incidentCategories": [
+    { "id": "suspicious", "label": "Suspicious activity" },
+    { "id": "breach", "label": "Security breach" },
+    { "id": "tailgating", "label": "Tailgating / unauthorised access" },
+    { "id": "damage", "label": "Property damage" },
+    { "id": "theft", "label": "Theft or loss" },
+    { "id": "medical", "label": "Medical" },
+    { "id": "hazard", "label": "Safety hazard" },
+    { "id": "other", "label": "Other" }
+  ],
+  "checks": [
+    {
+      "id": "restricted",
+      "name": "Restricted area check",
+      "description": "Plant room, server room and rooftop",
+      "items": [
+        { "type": "check", "label": "Server room door locked and access log matches sign-ins" },
+        { "type": "check", "label": "Plant room door locked, no unattended equipment" },
+        { "type": "check", "label": "Rooftop access door secured and alarmed" },
+        { "type": "check", "label": "No unauthorised persons in restricted zones" },
+        { "type": "check", "label": "CCTV covering restricted doors is working" }
+      ]
+    },
+    {
+      "id": "emergency",
+      "name": "Emergency resources inventory",
+      "description": "Counts against the expected stock at each post",
+      "items": [
+        { "type": "count", "label": "Fire extinguishers (charged, tagged)", "expected": 12 },
+        { "type": "count", "label": "First aid kits (sealed)", "expected": 4 },
+        { "type": "count", "label": "AED units (status light green)", "expected": 2 },
+        { "type": "count", "label": "Emergency torches", "expected": 6 },
+        { "type": "count", "label": "Two-way radios (charged)", "expected": 8 },
+        { "type": "check", "label": "Evacuation chair at stairwell 2" }
+      ]
+    },
+    {
+      "id": "perimeter",
+      "name": "Perimeter & route check",
+      "description": "Walk the security route around the building",
+      "items": [
+        { "type": "check", "label": "Perimeter fence and hoarding intact" },
+        { "type": "check", "label": "External lighting working along route" },
+        { "type": "check", "label": "Carpark gates and barriers operating" },
+        { "type": "check", "label": "Loading bay shutters closed when unattended" },
+        { "type": "check", "label": "No blocked fire exits or escape routes" },
+        { "type": "check", "label": "No blind spots / damaged CCTV on route" }
+      ]
+    }
   ],
   "assemblyPoint": "Open carpark, Lot P1 (opposite Gate C)"
 }

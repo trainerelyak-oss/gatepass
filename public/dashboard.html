@@ -22,7 +22,51 @@
   <main class="dash">
     <section class="kpis" id="kpis"></section>
 
-    <div class="dash-grid">
+    <nav class="dash-tabs" id="dash-tabs">
+      <button data-view="overview" class="active">Overview</button>
+      <button data-view="incidents">Incidents <span data-count="incidents"></span></button>
+      <button data-view="reviews">Temporary passes <span data-count="reviews"></span></button>
+      <button data-view="checks">Checks &amp; shift reports</button>
+    </nav>
+
+    <section class="dash-view" data-view="incidents" hidden>
+      <div class="split">
+        <div class="dash-panel"><div class="dash-panel-head"><h2>Incidents</h2></div><ul class="record-list" id="incident-list"></ul></div>
+        <div class="dash-panel incident-detail">
+          <div id="incident-detail"><p class="muted">Select an incident.</p></div>
+          <form class="stack followup-form" id="followup-form" hidden>
+            <h3>Add follow-up</h3>
+            <textarea name="text" rows="3" placeholder="Investigation notes, police report no., actions assigned"></textarea>
+            <div class="field-row">
+              <select name="status">
+                <option value="">Keep status</option>
+                <option value="open">Open</option>
+                <option value="investigating">Investigating</option>
+                <option value="escalated">Escalated</option>
+                <option value="closed">Closed</option>
+              </select>
+              <button class="btn btn-primary" type="submit">Send to officers</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="dash-view" data-view="reviews" hidden>
+      <div class="dash-panel">
+        <div class="dash-panel-head"><h2>Temporary passes issued by officers</h2><small class="muted">Review after sync. Revoked passes fail at every gate once devices sync.</small></div>
+        <div class="table-wrap"><table class="onsite-table" id="review-table"></table></div>
+      </div>
+    </section>
+
+    <section class="dash-view" data-view="checks" hidden>
+      <div class="split">
+        <div class="dash-panel"><div class="dash-panel-head"><h2>Site checks</h2></div><ul class="record-list" id="check-list"></ul></div>
+        <div class="dash-panel"><div class="dash-panel-head"><h2>Shift reports</h2></div><ul class="record-list" id="shift-list"></ul></div>
+      </div>
+    </section>
+
+    <div class="dash-grid dash-view" data-view="overview">
       <div class="dash-main">
         <section class="dash-panel alerts-panel" id="alerts-panel" hidden>
           <div class="dash-panel-head"><h2>Alerts</h2><small class="muted">Detected when gate devices sync</small></div>
@@ -54,6 +98,8 @@
             </div>
             <label class="field"><span>Company <em>optional</em></span><input name="company" autocomplete="off"></label>
             <label class="field"><span>Host / unit</span><input name="host" required placeholder="e.g. Acme Pte Ltd, #12-03" autocomplete="off"></label>
+            <fieldset class="field"><legend>Zones</legend><div id="invite-zones"></div></fieldset>
+            <label class="check-row"><input type="checkbox" name="escort"> Escort required</label>
             <div class="field-row">
               <label class="field"><span>From</span><input name="from" type="datetime-local" required></label>
               <label class="field"><span>Until</span><input name="to" type="datetime-local" required></label>

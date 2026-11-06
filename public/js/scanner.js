@@ -1,3 +1,9 @@
+export function warnNoCamera(toast, message) {
+  if (sessionStorage.getItem('cameraWarned')) return;
+  sessionStorage.setItem('cameraWarned', '1');
+  toast(message, 'warn');
+}
+
 export function cameraAvailable() {
   return Boolean(navigator.mediaDevices?.getUserMedia);
 }

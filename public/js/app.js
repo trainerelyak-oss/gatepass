@@ -7,6 +7,10 @@ import { onSiteVisits } from './visits.js';
 import gateView from './views/gate.js';
 import onsiteView from './views/onsite.js';
 import musterView from './views/muster.js';
+import spotView from './views/spotcheck.js';
+import incidentsView from './views/incidents.js';
+import checksView from './views/checks.js';
+import shiftView from './views/shift.js';
 import logView from './views/log.js';
 import settingsView from './views/settings.js';
 import onboardingView from './views/onboarding.js';
@@ -15,6 +19,10 @@ const routes = {
   gate: gateView,
   onsite: onsiteView,
   muster: musterView,
+  spot: spotView,
+  incidents: incidentsView,
+  checks: checksView,
+  shift: shiftView,
   log: logView,
   settings: settingsView
 };
@@ -53,8 +61,9 @@ async function route() {
 
   document.body.classList.remove('signed-out');
   const name = routes[location.hash.slice(1)] ? location.hash.slice(1) : 'gate';
+  const tab = { spot: 'onsite', shift: 'settings', log: 'settings' }[name] || name;
   document.querySelectorAll('.tabbar a').forEach(a => {
-    a.classList.toggle('active', a.dataset.route === name);
+    a.classList.toggle('active', a.dataset.route === tab);
   });
 
   const cleanup = await routes[name](main, ctx);
