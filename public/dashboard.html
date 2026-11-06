@@ -196,7 +196,7 @@
         <a class="btn btn-primary" id="pass-dialog-open" target="_blank" rel="noopener">Open pass page</a>
         <button class="btn btn-secondary" id="pass-dialog-copy" type="button">Copy link</button>
       </div>
-      <button class="btn btn-ghost btn-block" id="pass-dialog-tamper" type="button">Copy tampered pass (demo: validity stretched by 7 days, original signature kept)</button>
+      <button class="btn btn-ghost btn-block" id="pass-dialog-tamper" type="button">Show forged QR</button>
       <details class="forgery-explain">
         <summary>How forgery detection works</summary>
         <p>The QR code holds the visit details (name, host, zones, valid times) plus a digital signature. The signature is made with a secret key that only this server has (for a temporary pass, the issuing officer's phone has its own key the server knows about), and it is mathematically tied to those exact details.</p>

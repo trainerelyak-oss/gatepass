@@ -341,3 +341,5 @@ tr.is-muted td { opacity: 0.55; }
 .forgery-explain summary { cursor: pointer; font-weight: 650; color: var(--accent); }
 .forgery-explain p { margin-top: 8px; }
 .badge.status-false_alarm { background: var(--subtle); color: var(--muted); }
+
+.pass-dialog-qr.is-forged { outline: 4px solid var(--danger, #e5484d); outline-offset: 4px; }

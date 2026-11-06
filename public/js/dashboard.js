@@ -615,15 +615,18 @@ function showPass(invite) {
     ? 'Temporary pass signed by the officer\'s phone. Scan it at any gate or in a spot check.'
     : 'Visitor pass signed by this server. Scan it with a gate phone to test.';
   const tamperButton = document.getElementById('pass-dialog-tamper');
-  tamperButton.textContent = 'Copy tampered pass (demo: validity stretched by 7 days, original signature kept)';
-  tamperButton.onclick = async () => {
-    const forged = tamper(invite.token);
-    try {
-      await navigator.clipboard.writeText(forged);
-      tamperButton.textContent = 'Tampered pass copied. Paste it into the gate app\'s code box';
-    } catch {
-      prompt('Copy this tampered pass', forged);
-    }
+  const qrBox = document.getElementById('pass-dialog-qr');
+  const kind = document.getElementById('pass-dialog-kind');
+  const realKind = kind.textContent;
+  let forgedShown = false;
+  qrBox.classList.remove('is-forged');
+  tamperButton.textContent = 'Show forged QR (end date pushed back 7 days, original signature kept)';
+  tamperButton.onclick = () => {
+    forgedShown = !forgedShown;
+    qrBox.innerHTML = qrSvg(forgedShown ? tamper(invite.token) : invite.token);
+    qrBox.classList.toggle('is-forged', forgedShown);
+    kind.textContent = forgedShown ? 'FORGED copy for the demo. Scan it with a gate phone: it should be refused.' : realKind;
+    tamperButton.textContent = forgedShown ? 'Show the real QR again' : 'Show forged QR (end date pushed back 7 days, original signature kept)';
   };
   dialog.showModal();
 }
