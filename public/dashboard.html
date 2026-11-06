@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('gp-theme')||'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
   <title>GatePass · Control room</title>
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/app.css">
@@ -16,7 +17,12 @@
       <span class="brand-mark" data-icon="shield"></span>
       <span>GatePass <span class="brand-sub">Control room</span></span>
     </div>
-    <div class="live" data-tone="checking"><span class="dot"></span><span class="live-label">Connecting…</span></div>
+    <div class="topbar-actions">
+      <div class="live" data-tone="checking"><span class="dot"></span><span class="live-label">Connecting…</span></div>
+      <button class="icon-btn" id="sound-toggle" type="button" aria-label="Alert sound"></button>
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme"></button>
+      <button class="btn btn-secondary demo-btn" id="demo-open" type="button">Demo</button>
+    </div>
   </header>
 
   <main class="dash">
@@ -74,7 +80,13 @@
         </section>
 
         <section class="dash-panel">
-          <div class="dash-panel-head"><h2>On site now</h2><small class="muted" id="onsite-note"></small></div>
+          <div class="dash-panel-head">
+            <h2>On site now <small class="muted" id="onsite-note"></small></h2>
+            <div class="head-tools">
+              <label class="search search-sm"><input type="search" id="onsite-search" placeholder="Search"></label>
+              <button class="btn btn-secondary btn-sm" id="export-csv" type="button">Export CSV</button>
+            </div>
+          </div>
           <div class="table-wrap"><table class="onsite-table" id="onsite"></table></div>
         </section>
 
@@ -139,6 +151,20 @@
         <a class="btn btn-primary" id="pass-dialog-open" target="_blank" rel="noopener">Open pass page</a>
         <button class="btn btn-secondary" id="pass-dialog-copy" type="button">Copy link</button>
       </div>
+      <button class="btn btn-ghost btn-block" id="pass-dialog-tamper" type="button">Copy tampered pass (demo: validity stretched by 7 days, original signature kept)</button>
+    </div>
+  </dialog>
+
+  <dialog class="sheet demo-dialog" id="demo-dialog">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>Demo tools</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </div>
+      <p class="muted small">For rehearsals. Reset wipes all records, passes and reviews on the server; gate devices clear their copies on their next sync.</p>
+      <button class="btn btn-danger btn-block" id="demo-reset" type="button">Reset demo</button>
+      <button class="btn btn-primary btn-block" id="demo-seed" type="button">Load demo data</button>
+      <p class="muted small">Demo data: passes for Priya Nair (ID 101D) and John Lim (contractor, 567A), an interview later today, and two people already on site: Mei Ling Goh and Ahmad Bin Ismail.</p>
     </div>
   </dialog>
 </body>

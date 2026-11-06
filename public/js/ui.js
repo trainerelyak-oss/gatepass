@@ -1,3 +1,5 @@
+import { feedback } from './feedback.js';
+
 const ICONS = {
   shield: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6L12 3Z"/><path d="m9 12 2 2 4-4"/>',
   route: '<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h8.5a3.5 3.5 0 0 0 0-7h-9a3.5 3.5 0 0 1 0-7H16"/>',
@@ -22,7 +24,11 @@ const ICONS = {
   userPlus: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M19 8v6M16 11h6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
-  hardhat: '<path d="M2 18h20"/><path d="M4 18v-3a8 8 0 0 1 16 0v3"/><path d="M10 7V5h4v2"/>'
+  hardhat: '<path d="M2 18h20"/><path d="M4 18v-3a8 8 0 0 1 16 0v3"/><path d="M10 7V5h4v2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  bellOff: '<path d="M8.7 3A6 6 0 0 1 18 8c0 2.4.4 4.2 1 5.6M17 17H3s3-2 3-9c0-.8.1-1.6.4-2.3"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/><path d="m2 2 20 20"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>'
 };
 
 export function icon(name, className = 'icon') {
@@ -45,7 +51,9 @@ export function toast(message, tone = 'info') {
   const el = document.createElement('div');
   el.className = `toast toast-${tone}`;
   el.textContent = message;
+  el.addEventListener('click', () => el.remove());
   host.append(el);
+  while (host.children.length > 3) host.firstElementChild.remove();
   setTimeout(() => el.classList.add('leaving'), 2800);
   setTimeout(() => el.remove(), 3200);
 }
@@ -202,19 +210,65 @@ export function recordDetails(record) {
   return rows.join('');
 }
 
-export function screen(root, html, { validate, onMount } = {}) {
+export function screen(root, html, { validate, onMount, auto } = {}) {
   root.innerHTML = html;
   window.scrollTo(0, 0);
+  const verdict = root.querySelector('.verdict');
+  if (verdict) {
+    feedback(verdict.classList.contains('verdict-good') ? 'good' : verdict.classList.contains('verdict-bad') ? 'bad' : 'warn');
+  }
   onMount?.(root);
   return new Promise(resolve => {
+    let timer = null;
+    let finished = false;
+
+    const finish = step => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      root.removeEventListener('click', handler);
+      root.removeEventListener('pointerdown', cancelAuto);
+      root.removeEventListener('keydown', cancelAuto);
+      resolve(step);
+    };
+
     const handler = async event => {
       const button = event.target.closest('[data-step]');
       if (!button || button.disabled) return;
       event.preventDefault();
       if (validate && !(await validate(button.dataset.step, root))) return;
-      root.removeEventListener('click', handler);
-      resolve(button.dataset.step);
+      finish(button.dataset.step);
     };
+
+    function cancelAuto(event) {
+      if (!timer || event.target.closest?.(`[data-step="${auto.step}"]`)) return;
+      clearInterval(timer);
+      timer = null;
+      root.querySelector('.auto-count')?.remove();
+    }
+
     root.addEventListener('click', handler);
+
+    if (auto) {
+      const button = root.querySelector(`[data-step="${auto.step}"]`);
+      if (button) {
+        let left = auto.seconds;
+        const count = document.createElement('span');
+        count.className = 'auto-count';
+        count.textContent = left;
+        button.append(count);
+        timer = setInterval(() => {
+          if (!root.contains(button)) {
+            clearInterval(timer);
+            return;
+          }
+          left -= 1;
+          count.textContent = left;
+          if (left <= 0 && root.contains(button)) finish(auto.step);
+        }, 1000);
+        root.addEventListener('pointerdown', cancelAuto);
+        root.addEventListener('keydown', cancelAuto);
+      }
+    }
   });
 }

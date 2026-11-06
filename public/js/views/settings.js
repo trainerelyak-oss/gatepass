@@ -2,6 +2,8 @@ import { getMeta, setMeta, clearRecords, countPending } from '../db.js';
 import { subscribe, setSimulatedOffline, syncNow } from '../sync.js';
 import { esc, icon, timeAgo, toast } from '../ui.js';
 import { postLabel } from '../config.js';
+import { currentTheme, setTheme } from '../theme.js';
+import { soundEnabled, setSound, feedback } from '../feedback.js';
 
 export default async function settings(root, ctx) {
   const deviceId = await getMeta('deviceId');
@@ -40,6 +42,22 @@ export default async function settings(root, ctx) {
       </dl>
     </section>
 
+    <section class="panel stack">
+      <h2 class="panel-title">Display & sound</h2>
+      <div class="segmented two">
+        <button type="button" class="seg" data-theme-pick="dark" aria-checked="${currentTheme() === 'dark'}">Dark</button>
+        <button type="button" class="seg" data-theme-pick="light" aria-checked="${currentTheme() === 'light'}">Light (bright sun)</button>
+      </div>
+      <label class="switch-row">
+        <span>
+          <strong>Sounds</strong>
+          <small>Beep on valid, refused and warning results. Phones also vibrate.</small>
+        </span>
+        <input type="checkbox" class="switch" data-action="sound" ${soundEnabled() ? 'checked' : ''}>
+      </label>
+      ${window.installPrompt ? `<button class="btn btn-secondary btn-block" data-action="install">${icon('logIn')} Install GatePass on this device</button>` : ''}
+    </section>
+
     <section class="panel">
       <label class="switch-row">
         <span>
@@ -73,8 +91,25 @@ export default async function settings(root, ctx) {
 
   toggle.addEventListener('change', () => setSimulatedOffline(toggle.checked));
 
+  root.querySelector('[data-action="sound"]').addEventListener('change', event => {
+    setSound(event.target.checked);
+    if (event.target.checked) feedback('good');
+  });
+
   root.addEventListener('click', async event => {
+    const theme = event.target.closest('[data-theme-pick]');
+    if (theme) {
+      setTheme(theme.dataset.themePick);
+      root.querySelectorAll('[data-theme-pick]').forEach(b => b.setAttribute('aria-checked', String(b === theme)));
+      return;
+    }
     const action = event.target.closest('[data-action]')?.dataset.action;
+    if (action === 'install' && window.installPrompt) {
+      window.installPrompt.prompt();
+      window.installPrompt = null;
+      event.target.closest('[data-action]').remove();
+      return;
+    }
     if (action === 'sync') {
       await syncNow();
     } else if (action === 'signout') {

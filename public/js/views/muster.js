@@ -39,9 +39,25 @@ export default async function muster(root, ctx) {
         <ul class="missing-list">
           ${record.missing.map(m => `<li><strong>${esc(m.name)}</strong><small>${esc(m.badge || '')} · ${esc(m.host || '')} · in via Gate ${esc(m.checkinGate)}</small></li>`).join('')}
         </ul>
-        <p class="muted small">Pass this list to the fire service. The control room gets it automatically when this device reconnects.</p>` : ''}
+        <div class="field-row">
+          <a class="btn btn-danger" href="sms:?&body=${encodeURIComponent(missingText(record))}">${icon('alert')} Text this list</a>
+          <button class="btn btn-secondary" type="button" data-copy>Copy list</button>
+        </div>
+        <p class="muted small">SMS works on a weak cell signal even when there's no data. The control room also gets this automatically when the device reconnects.</p>` : ''}
     `;
   }
+
+  function missingText(record) {
+    const time = new Date(record.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return [
+      `ROLL CALL ${config.site.name} ${time}`,
+      `${record.missing.length} UNACCOUNTED (${record.accounted.length}/${record.total} safe):`,
+      ...record.missing.map(m => `- ${m.name}, ${m.badge || 'no badge'}, ${m.host || ''}, in via Gate ${m.checkinGate}`),
+      `Assembly point: ${config.assemblyPoint}`
+    ].join('\n');
+  }
+
+  let lastSummary = null;
 
   function renderActive() {
     const accounted = Object.keys(roll.accounted).length;
@@ -117,6 +133,7 @@ export default async function muster(root, ctx) {
     roll = null;
     await setMeta('activeMuster', null);
     toast('Roll call saved', 'ok');
+    lastSummary = record;
     renderIdle(record);
   }
 
@@ -131,6 +148,15 @@ export default async function muster(root, ctx) {
       }
       await setMeta('activeMuster', roll);
       renderActive();
+      return;
+    }
+    if (event.target.closest('[data-copy]') && lastSummary) {
+      try {
+        await navigator.clipboard.writeText(missingText(lastSummary));
+        toast('Missing list copied', 'ok');
+      } catch {
+        toast('Copy not available here', 'warn');
+      }
       return;
     }
     const action = event.target.closest('[data-action]')?.dataset.action;

@@ -2,7 +2,7 @@ import { getMeta, setMeta } from './db.js';
 import { init as initSync, subscribe, syncNow } from './sync.js';
 import { loadConfig } from './config.js';
 import { uid, startLocationWatch } from './records.js';
-import { icon, timeAgo } from './ui.js';
+import { icon, timeAgo, toast } from './ui.js';
 import { onSiteVisits } from './visits.js';
 import gateView from './views/gate.js';
 import onsiteView from './views/onsite.js';
@@ -48,8 +48,9 @@ async function route() {
     teardown = null;
   }
 
-  const main = document.getElementById('view');
-  main.innerHTML = '';
+  const previous = document.getElementById('view');
+  const main = previous.cloneNode(false);
+  previous.replaceWith(main);
   window.scrollTo(0, 0);
 
   if (!ctx.guard) {
@@ -139,7 +140,32 @@ function updateOnSiteBadge() {
   }, 150);
 }
 
+let wakeLock = null;
+
+async function updateWakeLock() {
+  const wanted = ctx.guard && ['gate', 'muster', 'spot'].includes(location.hash.slice(1) || 'gate') && document.visibilityState === 'visible';
+  try {
+    if (wanted && !wakeLock && navigator.wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!wanted && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch {
+    wakeLock = null;
+  }
+}
+
+let lastReset = null;
+
 async function boot() {
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    window.installPrompt = event;
+  });
+  document.addEventListener('visibilitychange', updateWakeLock);
+
   document.querySelectorAll('[data-icon]').forEach(el => {
     el.innerHTML = icon(el.dataset.icon);
   });
@@ -158,11 +184,20 @@ async function boot() {
   window.addEventListener('hashchange', () => {
     route();
     updateOnSiteBadge();
+    updateWakeLock();
+  });
+  subscribe(state => {
+    if (state.siteReset && state.siteReset !== lastReset) {
+      if (lastReset !== null || state.siteReset) toast('Site data was reset by the control room', 'warn');
+      lastReset = state.siteReset;
+      route();
+    }
   });
 
   await initSync();
   startLocationWatch();
   route();
+  updateWakeLock();
 }
 
 boot();

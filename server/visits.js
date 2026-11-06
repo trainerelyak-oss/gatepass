@@ -210,6 +210,20 @@ function buildState({ records, invites, devices, reviews }, watchlistReasons, no
     });
   }
 
+  for (const m of musters) {
+    if (!m.missing?.length) continue;
+    alert({
+      id: `muster-${m.id}`,
+      kind: 'muster',
+      severity: 'high',
+      at: m.endedAt || m.createdAt,
+      gate: m.gate,
+      title: `Roll call: ${m.missing.length} unaccounted for`,
+      detail: m.missing.map(p => `${p.name}${p.host ? ` (${p.host})` : ''}`).join(', '),
+      offline: Boolean(m.recordedOffline)
+    });
+  }
+
   const incidentList = Object.values(incidents).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   for (const i of incidentList) {
     if (i.currentStatus === 'closed') continue;

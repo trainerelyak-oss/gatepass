@@ -62,7 +62,10 @@ export default async function spotcheck(root, ctx) {
   let stopCamera = null;
   let active = true;
 
+  let scanning = false;
+
   async function run(input) {
+    scanning = false;
     stopCamera?.();
     stopCamera = null;
     const outcome = await evaluate(ctx, input, zone);
@@ -91,7 +94,7 @@ export default async function spotcheck(root, ctx) {
       </section>
       ${outcome.result !== 'ok' ? `<button class="btn btn-danger btn-block btn-large" data-step="incident">${icon('alert')} Report incident</button>` : ''}
       <button class="btn btn-primary btn-block btn-large" data-step="again">Check next person</button>
-    `);
+    `, outcome.result === 'ok' ? { auto: { step: 'again', seconds: 6 } } : {});
     if (!active) return;
     if (step === 'incident') {
       sessionStorage.setItem('incidentDraft', JSON.stringify({
@@ -145,11 +148,21 @@ export default async function spotcheck(root, ctx) {
     });
 
     if (cameraAvailable()) {
+      scanning = true;
+      let handled = false;
       try {
-        stopCamera = await startScanner(root.querySelector('video'), value => run({ token: value }));
+        const stop = await startScanner(root.querySelector('video'), value => {
+          if (handled || !scanning) return;
+          handled = true;
+          run({ token: value });
+        });
+        if (handled || !scanning || !active) stop();
+        else stopCamera = stop;
       } catch {
-        root.querySelector('.camera').hidden = true;
-        warnNoCamera(toast, 'Camera not available. Enter the badge number or paste a pass code.');
+        if (!handled && scanning && root.querySelector('.camera')) {
+          root.querySelector('.camera').hidden = true;
+          warnNoCamera(toast, 'Camera not available. Enter the badge number or paste a pass code.');
+        }
       }
     }
   }

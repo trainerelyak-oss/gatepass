@@ -1,6 +1,8 @@
 import { esc, icon, describeRecord, recordDetails, formatTime, formatDateTime, formatDuration, timeAgo } from './ui.js';
 import { qrSvg } from './qr.js';
 import { zonePicker, zoneList } from './config.js';
+import { feedback, soundEnabled, setSound } from './feedback.js';
+import { currentTheme, setTheme } from './theme.js';
 
 const POLL_MS = 3000;
 const DEVICE_STALE_MS = 2 * 60 * 1000;
@@ -28,6 +30,8 @@ const ALERT_ICONS = {
 };
 
 let view = 'overview';
+let onsiteQuery = '';
+let knownHigh = null;
 let selectedIncident = null;
 let lastIncidentRender = null;
 
@@ -87,8 +91,9 @@ function renderAlerts() {
 }
 
 function renderOnSite() {
-  const onSite = state.visits.filter(v => v.status === 'on_site');
-  document.getElementById('onsite-note').textContent = `${onSite.length} people`;
+  const q = onsiteQuery.toLowerCase();
+  const onSite = state.visits.filter(v => v.status === 'on_site' && (!q || [v.name, v.badge, v.host, v.company].some(f => String(f || '').toLowerCase().includes(q))));
+  document.getElementById('onsite-note').textContent = `${state.stats.onSite}`;
   document.getElementById('onsite').innerHTML = onSite.length
     ? `
       <thead><tr><th>Badge</th><th>Name</th><th>Type</th><th>Visiting</th><th>In</th><th></th></tr></thead>
@@ -332,8 +337,17 @@ function renderChecksAndShifts() {
     : '<li class="empty">No shift reports yet.</li>';
 }
 
+function notifyAlerts() {
+  const high = state.alerts.filter(a => a.severity === 'high');
+  document.title = high.length ? `(${high.length}) GatePass · Control room` : 'GatePass · Control room';
+  const ids = new Set(high.map(a => a.id));
+  if (knownHigh && [...ids].some(id => !knownHigh.has(id))) feedback('warn');
+  knownHigh = ids;
+}
+
 function renderAll() {
   if (state) {
+    notifyAlerts();
     renderCounts();
     if (view === 'incidents') renderIncidents();
     if (view === 'reviews') renderReviews();
@@ -373,6 +387,38 @@ async function poll() {
   renderAll();
 }
 
+function tamper(token) {
+  const [head, body, signature] = token.split('.');
+  const padded = body.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (body.length % 4)) % 4);
+  const payload = JSON.parse(atob(padded));
+  payload.e += 7 * 24 * 60 * 60;
+  const forged = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${head}.${forged}.${signature}`;
+}
+
+function csvCell(value) {
+  const s = String(value ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function exportCsv() {
+  const rows = [['Badge', 'Name', 'Type', 'Company', 'Host', 'Zones', 'Signed in', 'Gate in', 'Signed out', 'Gate out', 'Flags', 'Recorded offline']];
+  for (const v of state.visits) {
+    rows.push([v.badge, v.name, typeLabel(v.visitorType), v.company, v.host, zoneList(config, v.zones), v.checkinAt, v.checkinGate, v.checkoutAt, v.checkoutGate, (v.flags || []).join(' '), v.checkinOffline ? 'yes' : 'no']);
+  }
+  const blob = new Blob([rows.map(r => r.map(csvCell).join(',')).join('\n')], { type: 'text/csv' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `gatepass-visits-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function renderToggles() {
+  document.getElementById('sound-toggle').innerHTML = icon(soundEnabled() ? 'bell' : 'bellOff');
+  document.getElementById('theme-toggle').innerHTML = icon(currentTheme() === 'dark' ? 'sun' : 'moon');
+}
+
 function passLink(token) {
   return `${location.origin}/pass#${token}`;
 }
@@ -392,6 +438,17 @@ function showPass(invite) {
     }
   };
   document.getElementById('pass-dialog-copy').textContent = 'Copy link';
+  const tamperButton = document.getElementById('pass-dialog-tamper');
+  tamperButton.textContent = 'Copy tampered pass (demo: validity stretched by 7 days, original signature kept)';
+  tamperButton.onclick = async () => {
+    const forged = tamper(invite.token);
+    try {
+      await navigator.clipboard.writeText(forged);
+      tamperButton.textContent = 'Tampered pass copied. Paste it into the gate app\'s code box';
+    } catch {
+      prompt('Copy this tampered pass', forged);
+    }
+  };
   dialog.showModal();
 }
 
@@ -457,6 +514,41 @@ async function boot() {
   } catch {}
 
   setupInviteForm();
+
+  renderToggles();
+  document.getElementById('sound-toggle').addEventListener('click', () => {
+    setSound(!soundEnabled());
+    renderToggles();
+    if (soundEnabled()) feedback('warn');
+  });
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+    renderToggles();
+  });
+
+  document.getElementById('onsite-search').addEventListener('input', event => {
+    onsiteQuery = event.target.value.trim();
+    renderOnSite();
+  });
+  document.getElementById('export-csv').addEventListener('click', () => state && exportCsv());
+
+  const demo = document.getElementById('demo-dialog');
+  document.getElementById('demo-open').addEventListener('click', () => demo.showModal());
+  demo.querySelector('[data-close]').addEventListener('click', () => demo.close());
+  document.getElementById('demo-reset').addEventListener('click', async () => {
+    if (!confirm('Reset all demo data on the server?')) return;
+    await fetch('/api/demo/reset', { method: 'POST' });
+    knownHigh = null;
+    seen.clear();
+    selectedIncident = null;
+    await poll();
+    demo.close();
+  });
+  document.getElementById('demo-seed').addEventListener('click', async () => {
+    await fetch('/api/demo/seed', { method: 'POST' });
+    await poll();
+    demo.close();
+  });
 
   document.getElementById('dash-tabs').addEventListener('click', event => {
     const tab = event.target.closest('[data-view]');

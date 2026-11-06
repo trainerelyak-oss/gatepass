@@ -1,6 +1,7 @@
 import { saveRecord, uid } from '../records.js';
 import { verifyPass, checkWatchlist, isPartialId, normaliseId } from '../verify.js';
 import { allVisits, nextBadge } from '../visits.js';
+import { recordsByType } from '../db.js';
 import { mountPhotoPicker } from '../photos.js';
 import { mountSignaturePad } from '../signature.js';
 import { isConnected } from '../sync.js';
@@ -169,8 +170,18 @@ async function fromPass(root, ctx, source) {
   };
 }
 
+async function pastVisitors() {
+  const byName = new Map();
+  for (const r of await recordsByType('checkin')) {
+    const key = r.name.trim().toLowerCase();
+    if (!byName.has(key)) byName.set(key, r);
+  }
+  return byName;
+}
+
 async function walkIn(root, ctx, temporary = false) {
   const { config } = ctx;
+  const past = await pastVisitors();
   let picker;
   let visitor = null;
   const maxHours = config.tempAccess?.maxHours || 4;
@@ -183,7 +194,8 @@ async function walkIn(root, ctx, temporary = false) {
       ? `Issue a short-term pass signed by this device. Other gates can verify it offline. The control room reviews every temporary pass after sync.`
       : 'For visitors without a pass. Works offline.'}</p>
     <form class="stack" id="walkin" onsubmit="return false">
-      <label class="field"><span>Full name</span><input name="fullname" autocomplete="off" placeholder="As shown on ID"></label>
+      <label class="field"><span>Full name</span><input name="fullname" autocomplete="off" placeholder="As shown on ID" list="past-visitors"></label>
+      <datalist id="past-visitors">${[...past.values()].map(r => `<option value="${esc(r.name)}">${esc([r.company, r.host].filter(Boolean).join(' · '))}</option>`).join('')}</datalist>
       <label class="field">
         <span>ID: last 3 digits + letter</span>
         <input name="pid" class="id-input" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="567A">
@@ -228,6 +240,22 @@ async function walkIn(root, ctx, temporary = false) {
         r.querySelector('[data-zones]').innerHTML = zonePicker(config, config.defaultZones?.[input.value] || []);
       }));
       r.querySelector('[data-zones]').addEventListener('change', syncEscort);
+      const form = r.querySelector('#walkin');
+      form.fullname.addEventListener('change', () => {
+        const prior = past.get(form.fullname.value.trim().toLowerCase());
+        if (!prior) return;
+        form.pid.value = prior.partialId || '';
+        form.company.value = prior.company || '';
+        form.host.value = prior.host || '';
+        form.vehicle.value = prior.vehicle || '';
+        const type = form.querySelector(`input[name=type][value="${prior.visitorType}"]`);
+        if (type) {
+          type.checked = true;
+          r.querySelector('[data-zones]').innerHTML = zonePicker(config, prior.zones?.length ? prior.zones : config.defaultZones?.[prior.visitorType] || []);
+        }
+        form.escort.checked = Boolean(prior.escort);
+        toast(`Filled from ${prior.name}'s last visit. Check the ID again.`, 'ok');
+      });
     },
     validate: (s, r) => {
       if (s === 'cancel') return true;
@@ -482,5 +510,5 @@ export async function runCheckin(root, ctx, source) {
       ${record.recordedOffline ? 'Saved on this device. It will reach the control room when the connection is back.' : 'Uploading to the control room now.'}
     </p>
     <button class="btn btn-primary btn-block btn-large" data-step="done">Next visitor</button>
-  `);
+  `, { auto: { step: 'done', seconds: tempPass ? 30 : 10 } });
 }

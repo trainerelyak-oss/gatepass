@@ -34,6 +34,10 @@ GatePass keeps every gate working with no connection, and syncs when the connect
 
 **Control room dashboard.** Overview (alerts, who is on site, gate activity with offline delays, gate devices, last roll call, pass issuing), incidents with follow-up, temporary pass review, and checks and shift reports.
 
+**Built for real shifts.** Dark theme by default with a bright-sun light mode, beeps and vibration on every verdict, success screens that return to the gate on their own, returning-visitor autofill, on-site filters (overdue, contractors, escort, holding items, temporary) with time-left chips, screen kept awake at the gate and during roll calls, keyboard shortcuts on laptops (`S` scan, `W` walk-in, `T` temporary, `/` search), roll-call results you can text by SMS, and installable to the home screen.
+
+**Demo tools.** The dashboard's **Demo** button resets the server and loads a ready-made scenario (two passes, two people already on site). Gate devices clear their copies automatically on their next sync. Each pass dialog also has **Copy tampered pass** for showing forgery detection.
+
 ## Running it
 
 Needs Node 18+. Nothing to install.

@@ -1,4 +1,4 @@
-import { pendingRecords, countPending, markSynced, getMeta, setMeta } from './db.js';
+import { pendingRecords, countPending, markSynced, getMeta, setMeta, clearRecords } from './db.js';
 import { registerDeviceKey } from './devicekey.js';
 
 const MAX_BATCH_BYTES = 3 * 1024 * 1024;
@@ -118,6 +118,13 @@ async function pullSiteCache() {
   const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
+  const previous = await getMeta('siteCache');
+  if (previous?.epoch && data.epoch && previous.epoch !== data.epoch) {
+    await clearRecords();
+    await setMeta('activeMuster', null);
+    await setMeta('badgeCounter', null);
+    state.siteReset = data.epoch;
+  }
   data.fetchedAt = new Date().toISOString();
   await setMeta('siteCache', data);
   state.cacheUpdatedAt = data.fetchedAt;

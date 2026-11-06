@@ -53,6 +53,7 @@ function loadDb() {
     devices: data.devices || {},
     deviceKeys: data.deviceKeys || {},
     reviews: data.reviews || {},
+    epoch: data.epoch || crypto.randomUUID(),
     salt: data.salt || crypto.randomBytes(16).toString('hex')
   };
 }
@@ -208,6 +209,7 @@ function handleBootstrap(url, res) {
   const state = currentState();
   sendJson(res, 200, {
     serverTime: now.toISOString(),
+    epoch: db.epoch,
     keyId: signingKey.keyId,
     publicKey: signingKey.publicJwk,
     watchlist: watchlist.public,
@@ -238,6 +240,12 @@ function handleBootstrap(url, res) {
   });
 }
 
+function inviteError(message) {
+  const err = new Error(message);
+  err.status = 400;
+  return err;
+}
+
 async function handleCreateInvite(req, res) {
   let body;
   try {
@@ -245,6 +253,16 @@ async function handleCreateInvite(req, res) {
   } catch {
     return sendJson(res, 400, { error: 'Invalid JSON' });
   }
+  try {
+    const invite = createInvite(body);
+    await persist();
+    sendJson(res, 201, invite);
+  } catch (err) {
+    sendJson(res, err.status || 500, { error: err.message });
+  }
+}
+
+function createInvite(body) {
   const name = String(body.name || '').trim().slice(0, 60);
   const host = String(body.host || '').trim().slice(0, 60);
   const type = site.visitorTypes.some(t => t.id === body.type) ? body.type : 'visitor';
@@ -254,9 +272,9 @@ async function handleCreateInvite(req, res) {
   const zoneIds = new Set(site.zones.map(z => z.id));
   const zones = (Array.isArray(body.zones) ? body.zones : site.defaultZones[type] || []).filter(z => zoneIds.has(z));
 
-  if (!name || !host) return sendJson(res, 400, { error: 'Visitor name and host are required' });
-  if (isNaN(validFrom) || isNaN(validTo) || validTo <= validFrom) return sendJson(res, 400, { error: 'Invalid visit window' });
-  if (partialId && !/^\d{3}[A-Z]$/.test(partialId)) return sendJson(res, 400, { error: 'Partial ID must be the last 3 digits and letter, e.g. 567A' });
+  if (!name || !host) throw inviteError('Visitor name and host are required');
+  if (isNaN(validFrom) || isNaN(validTo) || validTo <= validFrom) throw inviteError('Invalid visit window');
+  if (partialId && !/^\d{3}[A-Z]$/.test(partialId)) throw inviteError('Partial ID must be the last 3 digits and letter, e.g. 567A');
 
   let id = passCode();
   while (db.invites[id]) id = passCode();
@@ -277,8 +295,58 @@ async function handleCreateInvite(req, res) {
   };
   invite.token = issuePass(signingKey, invite, site.site.id);
   db.invites[id] = invite;
+  return invite;
+}
+
+async function handleDemoReset(res) {
+  db.records = {};
+  db.invites = {};
+  db.reviews = {};
+  db.devices = {};
+  db.epoch = crypto.randomUUID();
+  for (const file of await fsp.readdir(PHOTO_DIR).catch(() => [])) {
+    await fsp.unlink(path.join(PHOTO_DIR, file)).catch(() => {});
+  }
   await persist();
-  sendJson(res, 201, invite);
+  sendJson(res, 200, { ok: true, epoch: db.epoch });
+}
+
+function seedCheckin(fields, minutesAgo) {
+  const at = new Date(Date.now() - minutesAgo * 60000).toISOString();
+  const id = crypto.randomUUID();
+  db.records[id] = {
+    id,
+    type: 'checkin',
+    revision: 1,
+    visitId: crypto.randomUUID(),
+    createdAt: at,
+    receivedAt: at,
+    updatedAt: at,
+    deviceId: 'seed',
+    recordedOffline: false,
+    location: null,
+    photos: [],
+    idCheck: 'recorded',
+    watchlist: null,
+    induction: null,
+    multiEntry: false,
+    passId: null,
+    passValidTo: null,
+    tempPass: null,
+    ...fields
+  };
+}
+
+async function handleDemoSeed(res) {
+  const now = Date.now();
+  const hour = 60 * 60 * 1000;
+  const priya = createInvite({ name: 'Priya Nair', type: 'visitor', host: 'Acme Pte Ltd, #12-03', partialId: '101D', validFrom: new Date(now - 0.5 * hour).toISOString(), validTo: new Date(now + 6 * hour).toISOString() });
+  const john = createInvite({ name: 'John Lim', type: 'contractor', company: 'ABC Engineering', host: 'Building management', partialId: '567A', zones: ['common', 'loading', 'plant'], validFrom: new Date(now - 0.5 * hour).toISOString(), validTo: new Date(now + 8 * hour).toISOString() });
+  createInvite({ name: 'Wei Jie Tan', type: 'interview', host: 'Acme Pte Ltd, #12-03', validFrom: new Date(now + 1 * hour).toISOString(), validTo: new Date(now + 3 * hour).toISOString() });
+  seedCheckin({ badge: 'C001', gate: 'C', guardName: 'Ahmad Razak', guardId: 'SO-2210', name: 'Mei Ling Goh', partialId: '238H', visitorType: 'visitor', host: 'Acme Pte Ltd, #12-03', company: null, method: 'walkin', zones: ['common', 'office'], escort: false, items: [{ kind: 'issued', name: 'Visitor lanyard', ref: '' }], permitNo: null }, 45);
+  seedCheckin({ badge: 'B001', gate: 'B', guardName: 'Siti Rahman', guardId: 'SO-1877', name: 'Ahmad Bin Ismail', partialId: '774J', visitorType: 'contractor', host: 'M&E works, L4 plant room', company: 'Kinetic M&E', method: 'walkin', zones: ['common', 'loading', 'plant'], escort: false, items: [{ kind: 'issued', name: 'Access card', ref: 'AC-208' }, { kind: 'declared', name: 'Power tools', ref: 'Drill + grinder' }], permitNo: 'PTW-2026-0398', induction: { items: site.induction, acknowledgedAt: new Date(now - 80 * 60000).toISOString(), signature: null, permitNo: 'PTW-2026-0398' } }, 80);
+  await persist();
+  sendJson(res, 200, { ok: true, passes: { priya: priya.id, john: john.id } });
 }
 
 async function readJson(req, res) {
@@ -407,6 +475,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/invites' && req.method === 'POST') {
       return await handleCreateInvite(req, res);
+    }
+    if (pathname === '/api/demo/reset' && req.method === 'POST') {
+      return await handleDemoReset(res);
+    }
+    if (pathname === '/api/demo/seed' && req.method === 'POST') {
+      return await handleDemoSeed(res);
     }
     if (pathname === '/api/devices/key' && req.method === 'POST') {
       return await handleDeviceKey(req, res);

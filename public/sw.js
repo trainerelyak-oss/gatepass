@@ -1,4 +1,4 @@
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `gatepass-${VERSION}`;
 
 const SHELL = [
@@ -17,6 +17,8 @@ const SHELL = [
   '/js/visits.js',
   '/js/signature.js',
   '/js/devicekey.js',
+  '/js/feedback.js',
+  '/js/theme.js',
   '/js/qr.js',
   '/js/views/spotcheck.js',
   '/js/views/incidents.js',

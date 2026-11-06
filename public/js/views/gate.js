@@ -51,11 +51,18 @@ export default async function gate(root, ctx) {
         </div>
       </div>
 
+      <p class="shortcut-hint">Keyboard: <kbd>S</kbd> scan · <kbd>W</kbd> walk-in · <kbd>T</kbd> temporary pass</p>
+
       <h2 class="section-title">Expected visitors</h2>
+      ${expected.length > 4 ? `
+        <label class="search">
+          ${icon('search')}
+          <input type="search" data-expected-search placeholder="Find an expected visitor">
+        </label>` : ''}
       ${expected.length ? `
-        <ul class="card-list">
+        <ul class="card-list expected-list">
           ${expected.map(invite => `
-            <li>
+            <li data-search="${esc(`${invite.name} ${invite.company || ''} ${invite.host} ${invite.id}`.toLowerCase())}">
               <button class="card-button" data-invite="${esc(invite.id)}">
                 <span class="card-icon">${icon(invite.type === 'contractor' ? 'hardhat' : 'user')}</span>
                 <span class="card-body">
@@ -128,20 +135,49 @@ export default async function gate(root, ctx) {
       startFlow({ kind: 'pass', token: invite.token, method: 'code' });
     };
 
+    form.code.addEventListener('focus', () => {
+      stopCamera?.();
+      stopCamera = null;
+    }, { once: true });
+
     if (cameraAvailable()) {
+      let handled = false;
       try {
-        stopCamera = await startScanner(sheet.querySelector('video'), value => {
+        const stop = await startScanner(sheet.querySelector('video'), value => {
+          if (handled) return;
+          handled = true;
           closeSheet(sheet);
-          navigator.vibrate?.(60);
           startFlow({ kind: 'pass', token: value, method: 'qr' });
         });
+        if (handled || !sheet.open) stop();
+        else stopCamera = stop;
       } catch {
-        sheet.querySelector('.camera').hidden = true;
-        warnNoCamera(toast, 'Camera not available. Type the pass code instead.');
+        if (!handled && sheet.open) {
+          sheet.querySelector('.camera').hidden = true;
+          warnNoCamera(toast, 'Camera not available. Type the pass code instead.');
+        }
       }
     }
     if (!stopCamera) form.code.focus();
   }
+
+  root.addEventListener('input', event => {
+    if (!event.target.matches('[data-expected-search]')) return;
+    const q = event.target.value.trim().toLowerCase();
+    root.querySelectorAll('.expected-list li').forEach(li => { li.hidden = q && !li.dataset.search.includes(q); });
+  });
+
+  const onKey = event => {
+    if (inFlow || sheetOpen() || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target.closest('input, textarea, select')) return;
+    const key = event.key.toLowerCase();
+    if (key === 's') openScanner();
+    else if (key === 'w') startFlow({ kind: 'walkin' });
+    else if (key === 't') startFlow({ kind: 'temp' });
+    else return;
+    event.preventDefault();
+  };
+  document.addEventListener('keydown', onKey);
 
   root.addEventListener('click', async event => {
     if (inFlow) return;
@@ -165,6 +201,7 @@ export default async function gate(root, ctx) {
 
   return () => {
     unsubscribe();
+    document.removeEventListener('keydown', onKey);
     stopCamera?.();
   };
 }
