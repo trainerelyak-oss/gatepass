@@ -35,7 +35,9 @@ export async function allVisits() {
     });
   }
 
+  const voided = new Set((await recordsByType('checkout_void')).map(r => r.checkoutId));
   for (const out of await recordsByType('checkout')) {
+    if (voided.has(out.id)) continue;
     const v = visits.get(out.visitId);
     if (v && v.status === 'on_site') {
       Object.assign(v, { status: 'left', checkoutAt: out.createdAt, checkoutGate: out.gate });

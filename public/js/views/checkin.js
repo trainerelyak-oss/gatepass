@@ -75,6 +75,10 @@ async function checkPassUsage(result) {
 async function fromPass(root, ctx, source) {
   const { config } = ctx;
   const result = await verifyPass(source.token, config.site.id);
+  if (result.pass && result.checks[0]?.ok) {
+    const inside = (await allVisits()).find(v => v.passId === result.pass.id && v.status === 'on_site');
+    if (inside) return { signout: inside };
+  }
   await checkPassUsage(result);
 
   if (!result.ok) {
@@ -104,15 +108,18 @@ async function fromPass(root, ctx, source) {
   const step = await screen(root, `
     <section class="verdict verdict-good">
       <span class="verdict-icon">${icon('check')}</span>
-      <h1>Valid pass</h1>
-      <p>Verified on this device${isConnected() ? '' : ' with no connection'}</p>
+      <h1>${esc(pass.name)}</h1>
+      <p>Valid pass · visiting ${esc(pass.host)} · until ${formatTime(pass.validTo)}</p>
     </section>
-    ${checkList(result.checks)}
-    <section class="panel">${passSummary(config, pass)}</section>
+    <details class="why">
+      <summary>${result.checks.length} checks passed${isConnected() ? '' : ', offline'}</summary>
+      ${checkList(result.checks)}
+      <section class="panel">${passSummary(config, pass)}</section>
+    </details>
     <label class="field">
       <span>Check photo ID: last 3 digits + letter</span>
       <input name="pid" class="id-input" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="567A" inputmode="text">
-      <small class="muted">Only the partial NRIC/FIN is recorded, in line with PDPC guidelines.</small>
+      <small class="muted">Only the partial NRIC/FIN is kept (PDPC guidelines).</small>
     </label>
     <button class="btn btn-primary btn-block btn-large" data-step="continue">Continue</button>
     <button class="btn btn-ghost btn-block" data-step="refuse">Refuse entry</button>
@@ -393,9 +400,61 @@ async function induction(root, ctx, visitor) {
   return { items: ctx.config.induction, acknowledgedAt: new Date().toISOString(), signature: pad.toDataURL(), permitNo };
 }
 
+export async function signOutFlow(root, ctx, visit) {
+  const items = visit.items || [];
+  let ticked = new Set();
+  const step = await screen(root, `
+    <section class="verdict verdict-info">
+      <span class="verdict-icon">${icon('logOut')}</span>
+      <h1>Sign out ${esc(visit.name)}?</h1>
+      <p>${esc(visit.badge || '')} · in since ${formatTime(visit.checkinAt)} at Gate ${esc(visit.checkinGate)}</p>
+    </section>
+    ${items.length ? `
+      <div class="return-list">
+        <span class="small"><strong>Check before they leave</strong></span>
+        ${items.map((item, i) => `
+          <label><input type="checkbox" data-item="${i}"><span>${item.kind === 'issued' ? 'Returned' : 'Leaving with'}: <strong>${esc(item.name)}</strong>${item.ref ? ` ${esc(item.ref)}` : ''}</span></label>`).join('')}
+      </div>` : ''}
+    <button class="btn btn-primary btn-block btn-large" data-step="out">${icon('logOut')} Sign out</button>
+    <button class="btn btn-ghost btn-block" data-step="cancel">Cancel</button>
+  `, {
+    validate: (s, r) => {
+      ticked = new Set([...r.querySelectorAll('[data-item]:checked')].map(i => Number(i.dataset.item)));
+      return true;
+    }
+  });
+  if (step !== 'out') return;
+  const itemsMissing = items.filter((item, i) => item.kind === 'issued' && !ticked.has(i));
+  if (itemsMissing.length && !confirm(`${itemsMissing.map(i => i.name).join(', ')} not returned. Sign out anyway? The control room will be alerted.`)) return;
+  const checkout = await saveRecord('checkout', {
+    visitId: visit.visitId,
+    name: visit.name,
+    badge: visit.badge,
+    gate: ctx.guard.gate,
+    itemsReturned: items.filter((item, i) => ticked.has(i)),
+    itemsMissing,
+    itemsUnconfirmed: items.filter((item, i) => item.kind === 'declared' && !ticked.has(i))
+  });
+  const after = await screen(root, `
+    <section class="verdict ${itemsMissing.length ? 'verdict-warn' : 'verdict-good'}">
+      <span class="verdict-icon">${icon(itemsMissing.length ? 'alert' : 'check')}</span>
+      <h1>Signed out</h1>
+      <p>${esc(visit.name)}${itemsMissing.length ? ` · ${esc(itemsMissing.map(i => i.name).join(', '))} not returned` : ''}</p>
+    </section>
+    <button class="btn btn-primary btn-block btn-large" data-step="done">Done</button>
+    <button class="btn btn-ghost btn-block" data-step="undo">Undo sign-out</button>
+  `, { auto: { step: 'done', seconds: 6 } });
+  if (after === 'undo') {
+    await saveRecord('checkout_void', { visitId: visit.visitId, checkoutId: checkout.id, name: visit.name, badge: visit.badge, gate: ctx.guard.gate });
+    toast(`${visit.name} is signed in again`, 'ok');
+  }
+}
+
 export async function runCheckin(root, ctx, source) {
+  if (source.kind === 'signout') return signOutFlow(root, ctx, source.visit);
   const visitor = source.kind === 'pass' ? await fromPass(root, ctx, source) : await walkIn(root, ctx, source.kind === 'temp');
   if (!visitor) return;
+  if (visitor.signout) return signOutFlow(root, ctx, visitor.signout);
 
   const hit = await checkWatchlist(visitor.name, visitor.partialId);
   if (hit?.level === 'deny') {
@@ -441,7 +500,8 @@ export async function runCheckin(root, ctx, source) {
     if (!inductionRecord) return;
   }
 
-  const items = await itemsStep(root, ctx, visitor);
+  const needsItems = ['contractor', 'delivery'].includes(visitor.visitorType) || visitor.method === 'temp';
+  const items = needsItems ? await itemsStep(root, ctx, visitor) : [];
 
   let tempPass = null;
   if (visitor.method === 'temp') {

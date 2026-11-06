@@ -82,11 +82,12 @@ export default async function incidents(root, ctx) {
     lastCache = (await getMeta('siteCache'))?.fetchedAt || null;
     const open = items.filter(i => i.currentStatus !== 'closed');
     root.innerHTML = `
+      <a class="back-link" href="#report">← Report</a>
       <div class="page-head">
         <h1 class="page-title">Incidents</h1>
         <button class="btn btn-danger" data-action="new">${icon('alert')} New</button>
       </div>
-      <p class="muted small">${open.length} open · statements, evidence and updates are saved on this device and synced to the control room.</p>
+      <p class="muted small">${open.length} open</p>
       <ul class="record-list">
         ${items.length ? items.map(i => `
           <li class="record tone-${i.severity === 'critical' || i.severity === 'high' ? 'danger' : i.currentStatus === 'closed' ? 'neutral' : 'warn'}">
@@ -365,8 +366,14 @@ export default async function incidents(root, ctx) {
   });
 
   const draft = JSON.parse(sessionStorage.getItem('incidentDraft') || 'null');
+  const startNew = sessionStorage.getItem('incidentNew');
+  const openId = sessionStorage.getItem('incidentOpen');
   sessionStorage.removeItem('incidentDraft');
+  sessionStorage.removeItem('incidentNew');
+  sessionStorage.removeItem('incidentOpen');
   if (draft) create(draft);
+  else if (startNew) create();
+  else if (openId) detail(openId);
   else await list();
 
   return subscribe(state => {

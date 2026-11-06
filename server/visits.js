@@ -49,6 +49,7 @@ function wasInside(visit, at) {
 
 function buildState({ records, invites, devices, reviews }, watchlistReasons, now = new Date()) {
   const events = Object.values(records).sort(byCreated);
+  const voidedCheckouts = new Set(events.filter(e => e.type === 'checkout_void').map(e => e.checkoutId));
   const visits = {};
   const incidents = {};
   const alerts = [];
@@ -65,6 +66,7 @@ function buildState({ records, invites, devices, reviews }, watchlistReasons, no
         visits[e.visitId] = visitFromCheckin(e);
         break;
       case 'checkout': {
+        if (voidedCheckouts.has(e.id)) break;
         const visit = visits[e.visitId];
         if (visit && visit.status === 'on_site') {
           visit.status = 'left';

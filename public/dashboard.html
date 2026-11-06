@@ -21,6 +21,7 @@
       <div class="live" data-tone="checking"><span class="dot"></span><span class="live-label">Connecting…</span></div>
       <button class="icon-btn" id="sound-toggle" type="button" aria-label="Alert sound"></button>
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme"></button>
+      <button class="btn btn-secondary demo-btn" id="connect-top" type="button">Connect device</button>
       <button class="btn btn-secondary demo-btn" id="demo-open" type="button">Demo</button>
     </div>
   </header>
@@ -101,28 +102,7 @@
 
       <aside class="dash-side">
         <section class="dash-panel">
-          <div class="dash-panel-head"><h2>Invite a visitor</h2></div>
-          <form class="stack invite-form" id="invite-form">
-            <label class="field"><span>Visitor name</span><input name="visitor" required autocomplete="off"></label>
-            <div class="field-row">
-              <label class="field"><span>Type</span><select name="type" id="invite-type"></select></label>
-              <label class="field"><span>ID (last 4) <em>optional</em></span><input name="pid" maxlength="4" placeholder="567A" autocomplete="off"></label>
-            </div>
-            <label class="field"><span>Company <em>optional</em></span><input name="company" autocomplete="off"></label>
-            <label class="field"><span>Host / unit</span><input name="host" required placeholder="e.g. Acme Pte Ltd, #12-03" autocomplete="off"></label>
-            <fieldset class="field"><legend>Zones</legend><div id="invite-zones"></div></fieldset>
-            <label class="check-row"><input type="checkbox" name="escort"> Escort required</label>
-            <div class="field-row">
-              <label class="field"><span>From</span><input name="from" type="datetime-local" required></label>
-              <label class="field"><span>Until</span><input name="to" type="datetime-local" required></label>
-            </div>
-            <label class="check-row"><input type="checkbox" name="multi"> Allow multiple entries</label>
-            <button class="btn btn-primary btn-block" type="submit">Create pass</button>
-          </form>
-        </section>
-
-        <section class="dash-panel">
-          <div class="dash-panel-head"><h2>Gate devices</h2></div>
+          <div class="dash-panel-head"><h2>Gate devices</h2><button class="link-button" id="connect-open" type="button">+ Connect</button></div>
           <ul class="devices" id="devices"></ul>
         </section>
 
@@ -132,7 +112,7 @@
         </section>
 
         <section class="dash-panel">
-          <div class="dash-panel-head"><h2>Passes issued</h2></div>
+          <div class="dash-panel-head"><h2>Passes</h2><button class="btn btn-primary btn-sm" id="new-pass" type="button">+ New pass</button></div>
           <ul class="invites" id="invites"></ul>
         </section>
       </aside>
@@ -152,6 +132,45 @@
         <button class="btn btn-secondary" id="pass-dialog-copy" type="button">Copy link</button>
       </div>
       <button class="btn btn-ghost btn-block" id="pass-dialog-tamper" type="button">Copy tampered pass (demo: validity stretched by 7 days, original signature kept)</button>
+    </div>
+  </dialog>
+
+  <dialog class="sheet invite-dialog" id="invite-dialog">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>New visitor pass</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </div>
+      <form class="stack invite-form" id="invite-form">
+            <label class="field"><span>Visitor name</span><input name="visitor" required autocomplete="off"></label>
+            <div class="field-row">
+              <label class="field"><span>Type</span><select name="type" id="invite-type"></select></label>
+              <label class="field"><span>ID (last 4) <em>optional</em></span><input name="pid" maxlength="4" placeholder="567A" autocomplete="off"></label>
+            </div>
+            <label class="field"><span>Company <em>optional</em></span><input name="company" autocomplete="off"></label>
+            <label class="field"><span>Host / unit</span><input name="host" required placeholder="e.g. Acme Pte Ltd, #12-03" autocomplete="off"></label>
+            <fieldset class="field"><legend>Zones</legend><div id="invite-zones"></div></fieldset>
+            <label class="check-row"><input type="checkbox" name="escort"> Escort required</label>
+            <div class="field-row">
+              <label class="field"><span>From</span><input name="from" type="datetime-local" required></label>
+              <label class="field"><span>Until</span><input name="to" type="datetime-local" required></label>
+            </div>
+            <label class="check-row"><input type="checkbox" name="multi"> Allow multiple entries</label>
+            <button class="btn btn-primary btn-block" type="submit">Create pass</button>
+          </form>
+    </div>
+  </dialog>
+
+  <dialog class="sheet connect-dialog" id="connect-dialog">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>Connect a gate device</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </div>
+      <p class="muted small">Scan with the officer's phone camera to open the gate app on this server.</p>
+      <div class="connect-qr" id="connect-qr"></div>
+      <p class="connect-url mono" id="connect-url"></p>
+      <p class="notice notice-warn small" id="connect-warning" hidden></p>
     </div>
   </dialog>
 

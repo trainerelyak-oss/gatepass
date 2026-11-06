@@ -1304,3 +1304,107 @@ input:focus, select:focus, textarea:focus {
 .filter-chips .chip { height: 32px; font-size: 13px; }
 .chip-count { opacity: 0.6; font-weight: 500; margin-left: 2px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.gate-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.gate-head h1 { font-size: 22px; letter-spacing: -0.02em; }
+.gate-head .eyebrow { margin-bottom: 2px; }
+
+.onsite-pill {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 14px;
+}
+.onsite-pill strong { color: var(--accent); font-size: 16px; }
+
+.scan-button {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  min-height: 132px;
+  padding: 24px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.scan-button .icon { width: 52px; height: 52px; stroke-width: 1.8; }
+.scan-button span { display: flex; flex-direction: column; }
+.scan-button strong { font-size: 26px; letter-spacing: -0.02em; }
+.scan-button small { font-size: 15px; opacity: 0.75; }
+.scan-button:active { transform: scale(0.99); }
+
+.quick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.quick-row .btn { min-height: 52px; }
+
+.expected { display: flex; flex-direction: column; gap: 8px; }
+.section-title .muted { margin-left: 4px; }
+
+.simple-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
+.simple-list li + li { border-top: 1px solid var(--line); }
+.simple-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.simple-main { display: flex; flex-direction: column; min-width: 0; }
+.simple-main small { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.simple-side { font-size: 13px; font-weight: 650; color: var(--muted); white-space: nowrap; }
+.sev-text-high, .sev-text-critical { color: var(--danger); }
+.sev-text-medium { color: var(--warn); }
+
+.link-button { align-self: center; border: 0; background: none; color: var(--accent); font-weight: 650; font-size: 14px; cursor: pointer; text-decoration: none; padding: 6px; }
+
+details.why { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+details.why > summary { padding: 12px 14px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--muted); list-style: none; }
+details.why > summary::-webkit-details-marker { display: none; }
+details.why > summary::after { content: "Show"; float: right; color: var(--accent); }
+details.why[open] > summary::after { content: "Hide"; }
+details.why[open] { padding-bottom: 10px; }
+details.why > :not(summary) { margin: 0 10px 10px; }
+details.why.panel { padding: 0; }
+details.why.panel .facts { margin: 0 14px 14px; }
+
+.verdict-info { background: var(--subtle); border: 1px solid var(--line); color: var(--ink); }
+.verdict-info .verdict-icon { background: var(--info-bg); color: var(--info); }
+
+.hub { display: grid; gap: 10px; }
+.hub-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+}
+.hub-card > .icon { width: 30px; height: 30px; color: var(--accent); flex-shrink: 0; }
+.hub-card span { display: flex; flex-direction: column; }
+.hub-card strong { font-size: 18px; }
+.hub-card small { color: var(--muted); font-size: 13px; }
+.hub-danger { border-color: var(--danger); background: var(--danger-bg); }
+.hub-danger > .icon { color: var(--danger); }
+
+.tabbar { grid-template-columns: repeat(4, 1fr); }
+.tabbar a { font-size: 12px; }
+.view { gap: 14px; }
+.panel .switch-row { margin-bottom: 14px; }

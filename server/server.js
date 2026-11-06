@@ -6,12 +6,12 @@ const os = require('os');
 const path = require('path');
 const { loadSigningKey, passCode, issuePass, watchlistHash } = require('./passes');
 const { buildState } = require('./visits');
+const { openStore } = require('./store');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PHOTO_DIR = path.join(DATA_DIR, 'photos');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
 const MAX_BODY = 40 * 1024 * 1024;
 
 const MIME = {
@@ -38,24 +38,19 @@ fs.mkdirSync(PHOTO_DIR, { recursive: true });
 
 const site = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, 'data', 'site.json'), 'utf8'));
 const signingKey = loadSigningKey(DATA_DIR);
+const store = openStore(DATA_DIR);
 const db = loadDb();
 const watchlist = loadWatchlist();
-let writeChain = Promise.resolve();
 
 function loadDb() {
-  let data = {};
-  try {
-    data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch {}
-  return {
-    records: data.records || {},
-    invites: data.invites || {},
-    devices: data.devices || {},
-    deviceKeys: data.deviceKeys || {},
-    reviews: data.reviews || {},
-    epoch: data.epoch || crypto.randomUUID(),
-    salt: data.salt || crypto.randomBytes(16).toString('hex')
-  };
+  const data = store.load();
+  if (!data.epoch) store.setMeta('epoch', (data.epoch = crypto.randomUUID()));
+  if (!data.salt) store.setMeta('salt', (data.salt = crypto.randomBytes(16).toString('hex')));
+  return data;
+}
+
+function save(collection, id) {
+  store.put(collection, id, db[collection][id]);
 }
 
 function loadWatchlist() {
@@ -83,20 +78,11 @@ function touchDevice(info, at) {
     postName: info.postName || existing.postName || null,
     temporaryUntil: info.temporaryUntil || null,
     guardName: info.guardName || existing.guardName || null,
+    pending: Number.isFinite(info.pending) ? info.pending : existing.pending ?? null,
     lastSeenAt: at,
     lastUploadAt: existing.lastUploadAt || null
   };
-}
-
-function persist() {
-  writeChain = writeChain
-    .then(async () => {
-      const tmp = `${DB_FILE}.tmp`;
-      await fsp.writeFile(tmp, JSON.stringify(db));
-      await fsp.rename(tmp, DB_FILE);
-    })
-    .catch(err => console.error('Failed to write database:', err));
-  return writeChain;
+  save('devices', info.deviceId);
 }
 
 function sendJson(res, status, body) {
@@ -162,8 +148,12 @@ async function handleSync(req, res) {
   const incoming = Array.isArray(body.records) ? body.records : [];
   const receivedAt = new Date().toISOString();
   touchDevice(body.device, receivedAt);
-  if (body.device?.deviceId && incoming.length) db.devices[body.device.deviceId].lastUploadAt = receivedAt;
+  if (body.device?.deviceId && incoming.length) {
+    db.devices[body.device.deviceId].lastUploadAt = receivedAt;
+    save('devices', body.device.deviceId);
+  }
   const accepted = [];
+  const changed = [];
 
   for (const record of incoming) {
     if (!record || typeof record.id !== 'string' || typeof record.type !== 'string') continue;
@@ -180,14 +170,15 @@ async function handleSync(req, res) {
       revision,
       photos,
       ...(integrity.length ? { photoIntegrity: integrity } : {}),
-      deviceId: record.deviceId || body.deviceId || null,
+      deviceId: record.deviceId || body.device?.deviceId || null,
       receivedAt: existing ? existing.receivedAt : receivedAt,
       updatedAt: receivedAt
     };
     accepted.push(record.id);
+    changed.push(record.id);
   }
 
-  await persist();
+  store.transaction(() => changed.forEach(id => save('records', id)));
   sendJson(res, 200, { accepted, serverTime: receivedAt });
 }
 
@@ -202,7 +193,8 @@ function handleBootstrap(url, res) {
     gate: url.searchParams.get('gate'),
     postName: url.searchParams.get('post'),
     temporaryUntil: url.searchParams.get('until'),
-    guardName: url.searchParams.get('guard')
+    guardName: url.searchParams.get('guard'),
+    pending: url.searchParams.has('pending') ? Number(url.searchParams.get('pending')) : undefined
   }, now.toISOString());
   const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
@@ -255,7 +247,6 @@ async function handleCreateInvite(req, res) {
   }
   try {
     const invite = createInvite(body);
-    await persist();
     sendJson(res, 201, invite);
   } catch (err) {
     sendJson(res, err.status || 500, { error: err.message });
@@ -295,6 +286,7 @@ function createInvite(body) {
   };
   invite.token = issuePass(signingKey, invite, site.site.id);
   db.invites[id] = invite;
+  save('invites', id);
   return invite;
 }
 
@@ -304,10 +296,13 @@ async function handleDemoReset(res) {
   db.reviews = {};
   db.devices = {};
   db.epoch = crypto.randomUUID();
+  store.transaction(() => {
+    for (const name of ['records', 'invites', 'reviews', 'devices']) store.clear(name);
+    store.setMeta('epoch', db.epoch);
+  });
   for (const file of await fsp.readdir(PHOTO_DIR).catch(() => [])) {
     await fsp.unlink(path.join(PHOTO_DIR, file)).catch(() => {});
   }
-  await persist();
   sendJson(res, 200, { ok: true, epoch: db.epoch });
 }
 
@@ -335,6 +330,7 @@ function seedCheckin(fields, minutesAgo) {
     tempPass: null,
     ...fields
   };
+  save('records', id);
 }
 
 async function handleDemoSeed(res) {
@@ -343,9 +339,10 @@ async function handleDemoSeed(res) {
   const priya = createInvite({ name: 'Priya Nair', type: 'visitor', host: 'Acme Pte Ltd, #12-03', partialId: '101D', validFrom: new Date(now - 0.5 * hour).toISOString(), validTo: new Date(now + 6 * hour).toISOString() });
   const john = createInvite({ name: 'John Lim', type: 'contractor', company: 'ABC Engineering', host: 'Building management', partialId: '567A', zones: ['common', 'loading', 'plant'], validFrom: new Date(now - 0.5 * hour).toISOString(), validTo: new Date(now + 8 * hour).toISOString() });
   createInvite({ name: 'Wei Jie Tan', type: 'interview', host: 'Acme Pte Ltd, #12-03', validFrom: new Date(now + 1 * hour).toISOString(), validTo: new Date(now + 3 * hour).toISOString() });
+  store.transaction(() => {
   seedCheckin({ badge: 'C001', gate: 'C', guardName: 'Ahmad Razak', guardId: 'SO-2210', name: 'Mei Ling Goh', partialId: '238H', visitorType: 'visitor', host: 'Acme Pte Ltd, #12-03', company: null, method: 'walkin', zones: ['common', 'office'], escort: false, items: [{ kind: 'issued', name: 'Visitor lanyard', ref: '' }], permitNo: null }, 45);
   seedCheckin({ badge: 'B001', gate: 'B', guardName: 'Siti Rahman', guardId: 'SO-1877', name: 'Ahmad Bin Ismail', partialId: '774J', visitorType: 'contractor', host: 'M&E works, L4 plant room', company: 'Kinetic M&E', method: 'walkin', zones: ['common', 'loading', 'plant'], escort: false, items: [{ kind: 'issued', name: 'Access card', ref: 'AC-208' }, { kind: 'declared', name: 'Power tools', ref: 'Drill + grinder' }], permitNo: 'PTW-2026-0398', induction: { items: site.induction, acknowledgedAt: new Date(now - 80 * 60000).toISOString(), signature: null, permitNo: 'PTW-2026-0398' } }, 80);
-  await persist();
+  });
   sendJson(res, 200, { ok: true, passes: { priya: priya.id, john: john.id } });
 }
 
@@ -365,15 +362,16 @@ async function handleDeviceKey(req, res) {
   if (!body.deviceId || !body.keyId || !jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) {
     return sendJson(res, 400, { error: 'Invalid device key' });
   }
-  db.deviceKeys[body.keyId] = {
-    keyId: String(body.keyId).slice(0, 32),
+  const keyId = String(body.keyId).slice(0, 32);
+  db.deviceKeys[keyId] = {
+    keyId,
     deviceId: String(body.deviceId).slice(0, 64),
     jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y },
     gate: body.gate || null,
     postName: body.postName || null,
     registeredAt: new Date().toISOString()
   };
-  await persist();
+  save('deviceKeys', keyId);
   sendJson(res, 201, { ok: true });
 }
 
@@ -389,7 +387,7 @@ async function handleReview(req, res) {
     by: String(body.by || 'Control room').slice(0, 60),
     at: new Date().toISOString()
   };
-  await persist();
+  save('reviews', body.passId);
   sendJson(res, 200, db.reviews[body.passId]);
 }
 
@@ -419,7 +417,7 @@ async function handleIncidentNote(req, res, incidentId) {
     recordedOffline: false,
     photos: []
   };
-  await persist();
+  save('records', id);
   sendJson(res, 201, db.records[id]);
 }
 
@@ -515,7 +513,8 @@ server.listen(PORT, () => {
     .flat()
     .filter(i => i && i.family === 'IPv4' && !i.internal)
     .map(i => `http://${i.address}:${PORT}`);
-  console.log(`GatePass running`);
+  const relative = path.relative(process.cwd(), store.file);
+  console.log(`GatePass running · ${store.kind} database: ${relative.startsWith('..') ? store.file : relative}`);
   console.log(`  Gate app:      http://localhost:${PORT}`);
   console.log(`  Control room:  http://localhost:${PORT}/dashboard`);
   for (const addr of addresses) console.log(`  On network: ${addr}`);

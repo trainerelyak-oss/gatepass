@@ -109,6 +109,8 @@ export function describeRecord(record) {
         title: `${record.name} signed out`,
         subtitle: [record.badge, `Gate ${record.gate}`].filter(Boolean).join(' · ')
       };
+    case 'checkout_void':
+      return { icon: 'logIn', tone: 'neutral', title: `Sign-out undone: ${record.name}`, subtitle: record.badge || '' };
     case 'denied':
       return {
         icon: 'ban',
@@ -215,7 +217,7 @@ export function screen(root, html, { validate, onMount, auto } = {}) {
   window.scrollTo(0, 0);
   const verdict = root.querySelector('.verdict');
   if (verdict) {
-    feedback(verdict.classList.contains('verdict-good') ? 'good' : verdict.classList.contains('verdict-bad') ? 'bad' : 'warn');
+    feedback(verdict.classList.contains('verdict-good') ? 'good' : verdict.classList.contains('verdict-bad') ? 'bad' : verdict.classList.contains('verdict-info') ? 'tick' : 'warn');
   }
   onMount?.(root);
   return new Promise(resolve => {

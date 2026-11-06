@@ -113,7 +113,8 @@ async function pullSiteCache() {
     gate: device.gate || '',
     guard: device.guardName || '',
     post: device.postName || '',
-    until: device.temporaryUntil || ''
+    until: device.temporaryUntil || '',
+    pending: String(state.pending)
   });
   const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);

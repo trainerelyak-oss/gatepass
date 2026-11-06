@@ -1,6 +1,6 @@
 import { getMeta } from '../db.js';
 import { subscribe } from '../sync.js';
-import { onSiteVisits, expectedVisitors, findInvite } from '../visits.js';
+import { onSiteVisits, expectedVisitors, findInvite, findVisitByBadge } from '../visits.js';
 import { cameraAvailable, startScanner, warnNoCamera } from '../scanner.js';
 import { postLabel, typeLabel } from '../config.js';
 import { esc, icon, toast, formatTime, timeAgo } from '../ui.js';
@@ -11,6 +11,7 @@ export default async function gate(root, ctx) {
   let inFlow = false;
   let stopCamera = null;
   let lastCache = null;
+  let showAll = false;
 
   const sheetOpen = () => Boolean(root.querySelector('#scan-sheet')?.open);
 
@@ -20,62 +21,52 @@ export default async function gate(root, ctx) {
     const [onSite, expected] = await Promise.all([onSiteVisits(), expectedVisitors()]);
     if (inFlow || sheetOpen()) return;
 
+    const shown = showAll ? expected : expected.slice(0, 3);
     root.innerHTML = `
-      <section class="gate-hero">
-        <span class="eyebrow">${esc(config.site.name)}</span>
-        <h1>${esc(postLabel(config, ctx.guard))}</h1>
-        ${ctx.guard.post?.until ? `<p class="post-until">Temporary post until ${formatTime(ctx.guard.post.until)}</p>` : ''}
-        <div class="gate-stats">
-          <a href="#onsite"><strong>${onSite.length}</strong><span>on site</span></a>
-          <div><strong>${expected.length}</strong><span>expected</span></div>
+      <header class="gate-head">
+        <div>
+          <span class="eyebrow">${esc(config.site.name)}</span>
+          <h1>${esc(postLabel(config, ctx.guard))}</h1>
+          ${ctx.guard.post?.until ? `<p class="post-until">Temporary post until ${formatTime(ctx.guard.post.until)}</p>` : ''}
         </div>
-      </section>
+        <a class="onsite-pill" href="#onsite"><strong>${onSite.length}</strong> on site</a>
+      </header>
 
       ${cache ? '' : `
         <section class="notice notice-warn">
           ${icon('cloudOff')}
-          <p><strong>Not set up for offline use yet.</strong> Connect to the internet once so this device can download the site key and visitor list.</p>
+          <p><strong>Connect once to set up.</strong> This device needs the site key and visitor list before it can work offline.</p>
         </section>`}
 
-      <div class="action-grid">
-        <button class="action action-primary" data-action="scan">
-          ${icon('qr')}<strong>Scan pass</strong><small>QR code on visitor's phone</small>
-        </button>
-        <div class="action-stack">
-          <button class="action action-small" data-action="walkin">
-            ${icon('userPlus')}<span><strong>Walk-in</strong><small>No pass</small></span>
-          </button>
-          <button class="action action-small" data-action="temp">
-            ${icon('clock')}<span><strong>Temporary</strong><small>Issue short pass</small></span>
-          </button>
-        </div>
+      <button class="scan-button" data-action="scan">
+        ${icon('qr')}
+        <span><strong>Scan pass</strong><small>Sign in or sign out</small></span>
+      </button>
+
+      <div class="quick-row">
+        <button class="btn btn-secondary" data-action="walkin">${icon('userPlus')} Walk-in</button>
+        <button class="btn btn-secondary" data-action="temp">${icon('clock')} Temporary pass</button>
       </div>
 
-      <p class="shortcut-hint">Keyboard: <kbd>S</kbd> scan · <kbd>W</kbd> walk-in · <kbd>T</kbd> temporary pass</p>
-
-      <h2 class="section-title">Expected visitors</h2>
-      ${expected.length > 4 ? `
-        <label class="search">
-          ${icon('search')}
-          <input type="search" data-expected-search placeholder="Find an expected visitor">
-        </label>` : ''}
       ${expected.length ? `
-        <ul class="card-list expected-list">
-          ${expected.map(invite => `
-            <li data-search="${esc(`${invite.name} ${invite.company || ''} ${invite.host} ${invite.id}`.toLowerCase())}">
-              <button class="card-button" data-invite="${esc(invite.id)}">
-                <span class="card-icon">${icon(invite.type === 'contractor' ? 'hardhat' : 'user')}</span>
-                <span class="card-body">
-                  <strong>${esc(invite.name)}</strong>
-                  <small>${esc(typeLabel(config, invite.type))}${invite.company ? ` · ${esc(invite.company)}` : ''} · ${esc(invite.host)}</small>
-                  <small>${formatTime(invite.validFrom)} – ${formatTime(invite.validTo)} · <span class="mono">${esc(invite.id)}</span></small>
-                </span>
-                ${icon('chevron')}
-              </button>
-            </li>`).join('')}
-        </ul>` : '<p class="empty">No more visitors expected today.</p>'}
-
-      ${cache ? `<p class="cache-note">Site data downloaded ${timeAgo(cache.fetchedAt)} · ${cache.invites.length} passes · signing key ${esc(cache.keyId)}</p>` : ''}
+        <section class="expected">
+          <h2 class="section-title">Expected today <span class="muted">${expected.length}</span></h2>
+          ${showAll && expected.length > 4 ? `
+            <label class="search">
+              ${icon('search')}
+              <input type="search" data-expected-search placeholder="Find an expected visitor">
+            </label>` : ''}
+          <ul class="simple-list expected-list">
+            ${shown.map(invite => `
+              <li data-search="${esc(`${invite.name} ${invite.company || ''} ${invite.host} ${invite.id}`.toLowerCase())}">
+                <button class="simple-row" data-invite="${esc(invite.id)}">
+                  <span class="simple-main"><strong>${esc(invite.name)}</strong><small>${esc(invite.host)}</small></span>
+                  <span class="simple-side">${formatTime(invite.validFrom)}</span>
+                </button>
+              </li>`).join('')}
+          </ul>
+          ${expected.length > 3 && !showAll ? `<button class="link-button" data-action="all">Show all ${expected.length}</button>` : ''}
+        </section>` : ''}
 
       <dialog class="sheet" id="scan-sheet">
         <form class="sheet-inner" id="code-form">
@@ -89,8 +80,8 @@ export default async function gate(root, ctx) {
             <p class="camera-hint">Hold the visitor's QR code inside the frame</p>
           </div>
           <label class="field">
-            <span>Or type the 6-character pass code</span>
-            <input name="code" class="id-input" autocomplete="off" autocapitalize="characters" placeholder="e.g. K7Q2XM">
+            <span>Or type a pass code or badge number</span>
+            <input name="code" class="id-input" autocomplete="off" autocapitalize="characters" placeholder="K7Q2XM or A001">
           </label>
           <button class="btn btn-primary btn-block" type="submit">Look up pass</button>
         </form>
@@ -126,9 +117,17 @@ export default async function gate(root, ctx) {
       event.preventDefault();
       const value = form.code.value.trim();
       if (!value) return;
-      const invite = value.startsWith('GP1.') ? { token: value } : await findInvite(value);
+      if (!/^G[PT]1\./.test(value)) {
+        const visit = await findVisitByBadge(value);
+        if (visit) {
+          closeSheet(sheet);
+          startFlow({ kind: 'signout', visit });
+          return;
+        }
+      }
+      const invite = /^G[PT]1\./.test(value) ? { token: value } : await findInvite(value);
       if (!invite) {
-        toast(`No pass "${value.toUpperCase()}" on this device. Scan the QR instead.`, 'warn');
+        toast(`No pass or badge "${value.toUpperCase()}" on this device. Scan the QR instead.`, 'warn');
         return;
       }
       closeSheet(sheet);
@@ -189,6 +188,10 @@ export default async function gate(root, ctx) {
     }
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'scan') openScanner();
+    if (action === 'all') {
+      showAll = true;
+      render();
+    }
     if (action === 'walkin') startFlow({ kind: 'walkin' });
     if (action === 'temp') startFlow({ kind: 'temp' });
   });

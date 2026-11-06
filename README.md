@@ -34,7 +34,7 @@ GatePass keeps every gate working with no connection, and syncs when the connect
 
 **Control room dashboard.** Overview (alerts, who is on site, gate activity with offline delays, gate devices, last roll call, pass issuing), incidents with follow-up, temporary pass review, and checks and shift reports.
 
-**Built for real shifts.** Dark theme by default with a bright-sun light mode, beeps and vibration on every verdict, success screens that return to the gate on their own, returning-visitor autofill, on-site filters (overdue, contractors, escort, holding items, temporary) with time-left chips, screen kept awake at the gate and during roll calls, keyboard shortcuts on laptops (`S` scan, `W` walk-in, `T` temporary, `/` search), roll-call results you can text by SMS, and installable to the home screen.
+**Built for real shifts.** Scan a pass (or type a badge number) to sign someone out, with undo. Dark theme by default with a bright-sun light mode, beeps and vibration on every verdict, success screens that return to the gate on their own, returning-visitor autofill, on-site filters (overdue, contractors, escort, holding items, temporary) with time-left chips, screen kept awake at the gate and during roll calls, keyboard shortcuts on laptops (`S` scan, `W` walk-in, `T` temporary, `/` search), roll-call results you can text by SMS, and installable to the home screen.
 
 **Demo tools.** The dashboard's **Demo** button resets the server and loads a ready-made scenario (two passes, two people already on site). Gate devices clear their copies automatically on their next sync. Each pass dialog also has **Copy tampered pass** for showing forgery detection.
 
@@ -52,7 +52,17 @@ npm start
 | Control room + issue passes | http://localhost:3000/dashboard |
 | Visitor pass | `/pass#<token>` (linked from the dashboard) |
 
-Data lives in `server/data/` (ignored by git). Delete the folder to reset everything, including the signing key.
+Data is stored in a SQLite database at `server/data/gatepass.sqlite`, using the SQLite engine built into Node (no packages to install). Older `db.json` data is imported automatically on first start. If your Node version has no built-in SQLite, the server falls back to a JSON file. Delete `server/data/` to reset everything, including the signing key.
+
+## Using it on several devices
+
+Every gate phone and the dashboard talk to the same server, so they all need to reach it over **https** (phones only allow the camera and offline pass checks on secure pages).
+
+**Option 1: tunnel from your laptop (quickest).** Run `npm start`, then in a second terminal `npx localtunnel --port 3000`. Open the https link it prints on the laptop, go to `/dashboard`, click **Connect device**, and scan the QR code with each officer's phone.
+
+**Option 2: deploy (stable address).** Push the repo to GitHub and create a Render web service from it (the included `render.yaml` sets it up). Every device then uses the same `https://...onrender.com` address. On the free plan the database resets when the service restarts, which is fine for a demo.
+
+Phones that lose signal keep working and catch up when they reconnect. The dashboard's **Gate devices** panel shows which phones are connected and how many records each is still holding.
 
 ## Demo walkthrough
 

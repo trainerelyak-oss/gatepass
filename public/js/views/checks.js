@@ -10,8 +10,8 @@ export default async function checks(root, ctx) {
   async function list() {
     const recent = (await recordsByType('inspection')).slice(0, 8);
     root.innerHTML = `
+      <a class="back-link" href="#report">← Report</a>
       <h1 class="page-title">Site checks</h1>
-      <p class="muted">Restricted areas, emergency equipment and the security route. Complete them with no signal; faults and shortages reach the control room on sync.</p>
       <ul class="card-list">
         ${config.checks.map(c => {
           const last = recent.find(r => r.checkId === c.id);

@@ -29,18 +29,25 @@ export default async function settings(root, ctx) {
         <div><dt>Last upload</dt><dd data-fact="last">—</dd></div>
         <div><dt>Device</dt><dd class="mono">${esc(deviceId?.slice(0, 8))}</dd></div>
       </dl>
+      <label class="switch-row">
+          <span>
+            <strong>Test mode: force offline</strong>
+            <small>Act as if there's no signal (for demos)</small>
+          </span>
+          <input type="checkbox" class="switch" data-action="simulate">
+        </label>
       <button class="btn btn-secondary btn-block" data-action="sync">${icon('sync')} Sync now</button>
     </section>
 
-    <section class="panel">
-      <h2 class="panel-title">Offline readiness</h2>
+    <details class="panel why">
+      <summary>Offline readiness</summary>
       <dl class="facts">
         <div><dt>Site data</dt><dd>${cache ? timeAgo(cache.fetchedAt) : 'Not downloaded'}</dd></div>
         <div><dt>Signing key</dt><dd class="mono">${esc(cache?.keyId || '—')}</dd></div>
         <div><dt>Passes stored</dt><dd>${cache?.invites.length ?? 0}</dd></div>
         <div><dt>Watchlist entries</dt><dd>${cache?.watchlist.entries.length ?? 0} <small class="muted">(fingerprints only)</small></dd></div>
       </dl>
-    </section>
+    </details>
 
     <section class="panel stack">
       <h2 class="panel-title">Display & sound</h2>
@@ -58,15 +65,7 @@ export default async function settings(root, ctx) {
       ${window.installPrompt ? `<button class="btn btn-secondary btn-block" data-action="install">${icon('logIn')} Install GatePass on this device</button>` : ''}
     </section>
 
-    <section class="panel">
-      <label class="switch-row">
-        <span>
-          <strong>Test mode: force offline</strong>
-          <small>Acts as if there's no signal, without turning off Wi-Fi. Handy for demos.</small>
-        </span>
-        <input type="checkbox" class="switch" data-action="simulate">
-      </label>
-    </section>
+
 
     <section class="stack">
       <a class="btn btn-primary btn-block" href="#shift">${icon('clipboard')} End-of-shift report</a>

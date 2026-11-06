@@ -30,6 +30,7 @@ const ALERT_ICONS = {
 };
 
 let view = 'overview';
+let feedExpanded = false;
 let onsiteQuery = '';
 let knownHigh = null;
 let selectedIncident = null;
@@ -117,7 +118,8 @@ function renderFeed() {
     return `<button class="chip ${f.id === filter ? 'active' : ''}" data-filter="${f.id}">${f.label} <span class="chip-count">${count}</span></button>`;
   }).join('');
 
-  const visible = state.feed.filter(r => filter === 'all' || r.type === filter);
+  const all = state.feed.filter(r => filter === 'all' || r.type === filter);
+  const visible = feedExpanded ? all : all.slice(0, 8);
   document.getElementById('feed').innerHTML = visible.length
     ? visible.map(record => {
         const d = describeRecord(record);
@@ -134,7 +136,7 @@ function renderFeed() {
             </button>
             ${expanded.has(record.id) ? `<div class="record-details">${recordDetails(record)}<p class="detail-meta">Received by server ${formatDateTime(record.receivedAt)}</p></div>` : ''}
           </li>`;
-      }).join('')
+      }).join('') + (all.length > visible.length ? `<li><button class="link-button" id="feed-more" type="button">Show all ${all.length}</button></li>` : '')
     : '<li class="empty">Nothing yet. Activity appears here as gate devices sync.</li>';
 }
 
@@ -150,7 +152,7 @@ function renderDevices() {
               <strong>${esc(d.postName || config.gates.find(g => g.id === d.gate)?.name || `Gate ${d.gate || '?'}`)}${d.temporaryUntil ? ` <span class="tag tag-temp">temporary until ${formatTime(d.temporaryUntil)}</span>` : ''}</strong>
               <small>${esc(d.guardName || 'Unknown officer')}</small>
             </span>
-            <span class="device-state">${silent ? `Offline · last seen ${timeAgo(d.lastSeenAt)}` : 'Connected'}</span>
+            <span class="device-state">${silent ? `Offline · last seen ${timeAgo(d.lastSeenAt)}` : 'Connected'}${d.pending ? `<small>${d.pending} waiting to upload</small>` : ''}</span>
           </li>`;
       }).join('')
     : '<li class="empty">No gate devices have connected yet.</li>';
@@ -159,10 +161,8 @@ function renderDevices() {
 function renderMuster() {
   const latest = state.musters[0];
   const el = document.getElementById('muster');
-  if (!latest) {
-    el.innerHTML = '<p class="muted small">No evacuations recorded.</p>';
-    return;
-  }
+  el.closest('.dash-panel').hidden = !latest;
+  if (!latest) return;
   el.innerHTML = `
     <div class="muster-summary ${latest.missing.length ? 'has-missing' : ''}">
       <strong>${latest.accounted.length}/${latest.total} accounted</strong>
@@ -496,6 +496,7 @@ function setupInviteForm() {
       form.pid.value = '';
       form.company.value = '';
       await poll();
+      document.getElementById('invite-dialog').close();
       showPass(body);
     } catch (err) {
       alert(err.message);
@@ -531,6 +532,28 @@ async function boot() {
     renderOnSite();
   });
   document.getElementById('export-csv').addEventListener('click', () => state && exportCsv());
+
+  const inviteDialog = document.getElementById('invite-dialog');
+  document.getElementById('new-pass').addEventListener('click', () => inviteDialog.showModal());
+  inviteDialog.querySelector('[data-close]').addEventListener('click', () => inviteDialog.close());
+
+  const connect = document.getElementById('connect-dialog');
+  const openConnect = () => {
+    const url = `${location.origin}/`;
+    document.getElementById('connect-qr').innerHTML = qrSvg(url);
+    document.getElementById('connect-url').textContent = url;
+    const local = ['localhost', '127.0.0.1'].includes(location.hostname);
+    const secure = location.protocol === 'https:';
+    const warning = document.getElementById('connect-warning');
+    warning.hidden = secure;
+    warning.textContent = local
+      ? 'This address only works on this computer. Start a tunnel (npx localtunnel --port 3000) or deploy, then open the dashboard through that https address and connect devices from there.'
+      : 'Phones need https for the camera and offline pass checks. Use a tunnel or a deployed https address.';
+    connect.showModal();
+  };
+  document.getElementById('connect-open').addEventListener('click', openConnect);
+  document.getElementById('connect-top').addEventListener('click', openConnect);
+  connect.querySelector('[data-close]').addEventListener('click', () => connect.close());
 
   const demo = document.getElementById('demo-dialog');
   document.getElementById('demo-open').addEventListener('click', () => demo.showModal());
@@ -604,6 +627,11 @@ async function boot() {
   });
 
   document.getElementById('feed').addEventListener('click', event => {
+    if (event.target.closest('#feed-more')) {
+      feedExpanded = true;
+      renderFeed();
+      return;
+    }
     const row = event.target.closest('.record-row');
     if (!row) return;
     const id = row.closest('.record').dataset.id;
