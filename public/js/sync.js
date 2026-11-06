@@ -116,7 +116,9 @@ async function pullSiteCache() {
     until: device.temporaryUntil || '',
     pending: String(state.pending)
   });
-  const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store' });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store', signal: controller.signal }).finally(() => clearTimeout(timer));
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const previous = await getMeta('siteCache');
@@ -162,11 +164,15 @@ async function run() {
 
     for (const batch of batches(queue)) {
       if (!isConnected()) break;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
       const res = await fetch('/api/sync', {
+        signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device, records: batch.map(payload) })
       });
+      clearTimeout(timer);
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       const { accepted, serverTime } = await res.json();
       const sent = batch

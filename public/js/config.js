@@ -9,14 +9,19 @@ const EMPTY = {
 };
 
 export async function loadConfig() {
+  const cached = await getMeta('config');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cached ? 2500 : 8000);
   try {
-    const res = await fetch('/data/site.json', { cache: 'no-cache' });
+    const res = await fetch('/data/site.json', { cache: 'no-cache', signal: controller.signal });
     if (!res.ok) throw new Error(`Config request failed (${res.status})`);
     const config = await res.json();
     await setMeta('config', config);
     return config;
   } catch {
-    return (await getMeta('config')) || EMPTY;
+    return cached || EMPTY;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -196,9 +196,9 @@ async function boot() {
     }
   });
 
-  await initSync();
-  startLocationWatch();
   route();
+  initSync();
+  startLocationWatch();
   updateWakeLock();
 }
 
