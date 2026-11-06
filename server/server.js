@@ -769,9 +769,17 @@ async function main() {
   for (const name of ['users', 'watchlist']) db[name] = db[name] || {};
   if (!db.authSecret) store.setMeta('authSecret', (db.authSecret = crypto.randomBytes(32).toString('base64')));
   tokens = createTokens(db.authSecret);
-  if (!Object.keys(db.users).length && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
-    createUser({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD, name: 'Administrator', role: 'admin' }, 'env');
-    console.log(`  Created admin account "${normaliseUsername(process.env.ADMIN_USERNAME)}" from environment`);
+  if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+    const username = normaliseUsername(process.env.ADMIN_USERNAME);
+    const existing = Object.values(db.users).find(u => u.username === username);
+    if (!existing) {
+      createUser({ username, password: process.env.ADMIN_PASSWORD, name: 'Administrator', role: 'admin' }, 'env');
+      console.log(`  Admin account "${username}" created from ADMIN_USERNAME / ADMIN_PASSWORD`);
+    } else if (!verifyPassword(process.env.ADMIN_PASSWORD, existing.passwordHash) || existing.role !== 'admin' || !existing.active) {
+      Object.assign(existing, { passwordHash: hashPassword(process.env.ADMIN_PASSWORD), role: 'admin', active: true, tokenVersion: (existing.tokenVersion || 0) + 1 });
+      save('users', existing.id);
+      console.log(`  Admin account "${username}" reset from ADMIN_USERNAME / ADMIN_PASSWORD`);
+    }
   }
   seedWatchlist();
   signingKey = loadSigningKey(DATA_DIR, db.signingKey, jwks => store.setMeta('signingKey', (db.signingKey = jwks)));
