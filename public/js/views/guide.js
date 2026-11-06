@@ -80,6 +80,16 @@ export default async function guide(root) {
       </details>
 
       <details class="panel why explain">
+        <summary>How is a forged pass caught?</summary>
+        <div class="explain-body">
+          <p>Every pass QR holds the visit details plus a <strong>digital signature</strong>, made with a secret key that only the server has (temporary passes are signed by the officer's phone with its own key).</p>
+          <p>Each gate phone keeps the matching <strong>public key</strong>. It can check a signature but can't create one. Change a single character, such as stretching the end date, and the signature no longer matches the details, so the phone refuses it, offline.</p>
+          <p>A perfect copy of a real pass is caught differently: single-entry passes can't be used twice at the same gate, the ID must match, and if two offline gates both admit it, the control room gets a "used twice" alert when they sync.</p>
+          <p>To demo it: dashboard → open a pass → <strong>Copy tampered pass</strong> → paste into the gate's scan box, or TEST → Visitor shows a forged pass.</p>
+        </div>
+      </details>
+
+      <details class="panel why explain">
         <summary>Who can do what</summary>
         <div class="explain-body">
           <table class="roles-table">

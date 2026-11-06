@@ -26,7 +26,7 @@ export async function allVisits() {
       escort: Boolean(c.escort),
       items: c.items || [],
       permitNo: c.permitNo || null,
-      tempPass: c.tempPass ? { id: c.tempPass.id, validTo: c.tempPass.validTo, reason: c.tempPass.reason } : null,
+      tempPass: c.tempPass ? { id: c.tempPass.id, token: c.tempPass.token, validTo: c.tempPass.validTo, reason: c.tempPass.reason } : null,
       checkinAt: c.createdAt,
       checkinGate: c.gate,
       status: 'on_site',

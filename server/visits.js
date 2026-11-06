@@ -228,13 +228,18 @@ function buildState({ records, invites, devices, reviews }, watchlistReasons, no
 
   const incidentList = Object.values(incidents).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   for (const i of incidentList) {
-    if (i.currentStatus === 'closed') continue;
+    if (i.currentStatus === 'closed' || i.currentStatus === 'false_alarm') continue;
     if (i.severity === 'critical' || i.severity === 'high') {
       alert({ id: `inc-${i.incidentId}`, kind: 'incident', severity: 'high', at: i.createdAt, gate: i.gate, title: `${i.severity === 'critical' ? 'Critical' : 'High'} incident: ${i.title}`, detail: `${i.categoryLabel || i.category} · ${i.location || ''}`, offline: Boolean(i.recordedOffline) });
     }
   }
 
-  alerts.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  for (const a of alerts) {
+    const ack = reviews[`alert:${a.id}`];
+    if (ack && ack.status !== 'open') a.ack = ack;
+  }
+  alerts.sort((a, b) => Boolean(a.ack) - Boolean(b.ack) || (b.at || '').localeCompare(a.at || ''));
+  const openAlerts = alerts.filter(a => !a.ack);
   visitList.sort((a, b) => b.checkinAt.localeCompare(a.checkinAt));
 
   const today = now.toDateString();
@@ -254,9 +259,10 @@ function buildState({ records, invites, devices, reviews }, watchlistReasons, no
     stats: {
       onSite: visitList.filter(v => v.status === 'on_site').length,
       today: visitList.filter(v => new Date(v.checkinAt).toDateString() === today).length,
-      alerts: alerts.length,
-      highAlerts: alerts.filter(a => a.severity === 'high').length,
-      openIncidents: incidentList.filter(i => i.currentStatus !== 'closed').length,
+      alerts: openAlerts.length,
+      highAlerts: openAlerts.filter(a => a.severity === 'high').length,
+      handledAlerts: alerts.length - openAlerts.length,
+      openIncidents: incidentList.filter(i => i.currentStatus !== 'closed' && i.currentStatus !== 'false_alarm').length,
       pendingReviews: tempPasses.filter(t => !t.review).length,
       offlineEvents: offlineEvents.length,
       longestOfflineMs: offlineEvents.reduce((max, e) => Math.max(max, delayMs(e)), 0)

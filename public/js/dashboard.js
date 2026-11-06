@@ -30,6 +30,9 @@ const ALERT_ICONS = {
 };
 
 let view = 'overview';
+let handledOpen = false;
+let invitesExpanded = false;
+const openRecords = new Set();
 let token = null;
 let me = null;
 let pollTimer = null;
@@ -145,21 +148,44 @@ function renderKpis() {
     </div>`).join('');
 }
 
-function renderAlerts() {
-  const panel = document.getElementById('alerts-panel');
-  panel.hidden = !state.alerts.length;
-  document.getElementById('alerts').innerHTML = state.alerts.map(a => `
-    <li class="alert alert-${a.severity} ${fresh.has(a.id) ? 'is-fresh' : ''}">
+const ACK_LABEL = { false_alarm: 'False alarm', resolved: 'Resolved' };
+
+function alertItem(a) {
+  return `
+    <li class="alert alert-${a.severity} ${a.ack ? 'is-handled' : ''} ${fresh.has(a.id) ? 'is-fresh' : ''}">
       <span class="alert-icon">${icon(ALERT_ICONS[a.kind] || 'alert')}</span>
       <span class="alert-body">
         <strong>${esc(a.title)}</strong>
         <small>${esc(a.detail)}</small>
+        ${a.ack ? `<small class="ack-line">${esc(ACK_LABEL[a.ack.status] || a.ack.status)} · ${esc(a.ack.by)} · ${formatTime(a.ack.at)}${a.ack.note ? ` · "${esc(a.ack.note)}"` : ''}</small>` : ''}
       </span>
       <span class="alert-meta">
         ${formatTime(a.at)}
         ${a.offline ? `<span class="badge badge-offline">${icon('cloudOff')} found on sync</span>` : ''}
+        <span class="ack-actions">
+          ${a.ack
+            ? `<button class="link-button" data-ack="open" data-alert="${esc(a.id)}">Reopen</button>`
+            : `<button class="btn btn-ghost btn-sm" data-ack="false_alarm" data-alert="${esc(a.id)}">False alarm</button><button class="btn btn-secondary btn-sm" data-ack="resolved" data-alert="${esc(a.id)}">Resolved</button>`}
+        </span>
       </span>
-    </li>`).join('');
+    </li>`;
+}
+
+function renderAlerts() {
+  const panel = document.getElementById('alerts-panel');
+  const open = state.alerts.filter(a => !a.ack);
+  const handled = state.alerts.filter(a => a.ack);
+  panel.hidden = !state.alerts.length;
+  panel.classList.toggle('all-handled', !open.length);
+  document.getElementById('alerts').innerHTML = `
+    ${open.map(alertItem).join('') || '<li class="empty small">No open alerts.</li>'}
+    ${handled.length ? `
+      <li class="handled-group">
+        <details ${handledOpen ? 'open' : ''}>
+          <summary>Handled (${handled.length})</summary>
+          <ul class="alerts">${handled.map(alertItem).join('')}</ul>
+        </details>
+      </li>` : ''}`;
 }
 
 function renderOnSite() {
@@ -176,7 +202,7 @@ function renderOnSite() {
             <td><strong>${esc(v.name)}</strong>${v.company ? `<small>${esc(v.company)}</small>` : ''}</td>
             <td>${esc(typeLabel(v.visitorType))}${v.inducted ? ' <span class="tag">inducted</span>' : ''}${v.tempPass ? ' <span class="tag tag-temp">temp</span>' : ''}<small>${esc(zoneList(config, v.zones))}${v.escort ? ' · escort' : ''}</small>${v.items?.filter(i => i.kind === 'issued').length ? `<small>Holding: ${esc(v.items.filter(i => i.kind === 'issued').map(i => i.ref ? `${i.name} ${i.ref}` : i.name).join(', '))}</small>` : ''}</td>
             <td>${esc(v.host || '')}</td>
-            <td>${formatTime(v.checkinAt)}<small>Gate ${esc(v.checkinGate)}</small></td>
+            <td>${formatTime(v.checkinAt)}<small>Gate ${esc(v.checkinGate)}</small>${passFor(v) ? `<button class="link-button qr-link" data-visit-qr="${esc(v.visitId)}">${icon('qr')} Pass</button>` : ''}</td>
             <td>${(v.flags || []).map(f => `<span class="tag tag-${f}">${esc(f.replace('_', ' '))}</span>`).join(' ')}${v.checkinOffline ? `<span class="tag tag-offline">offline +${formatDuration(v.checkinDelayMs)}</span>` : ''}</td>
           </tr>`).join('')}
       </tbody>`
@@ -245,7 +271,7 @@ function renderMuster() {
 
 function renderInvites() {
   document.getElementById('invites').innerHTML = state.invites.length
-    ? state.invites.slice(0, 12).map(i => {
+    ? state.invites.slice(0, invitesExpanded ? 500 : 8).map(i => {
         const used = state.visits.filter(v => v.passId === i.id).length;
         const expired = new Date(i.validTo) < Date.now();
         return `
@@ -259,7 +285,7 @@ function renderInvites() {
               <span class="invite-state">${expired ? 'Expired' : used ? `Used ${used}×` : 'Not used'}</span>
             </button>
           </li>`;
-      }).join('')
+      }).join('') + (state.invites.length > 8 && !invitesExpanded ? `<li><button class="link-button" id="invites-more" type="button">Show all ${state.invites.length}</button></li>` : '')
     : '<li class="empty">No passes yet.</li>';
 }
 
@@ -271,7 +297,7 @@ function renderLive() {
     : 'Server unreachable';
 }
 
-const statusLabel = s => ({ open: 'Open', investigating: 'Investigating', escalated: 'Escalated', closed: 'Closed' })[s] || s;
+const statusLabel = s => ({ open: 'Open', investigating: 'Investigating', escalated: 'Escalated', closed: 'Closed', false_alarm: 'False alarm' })[s] || s;
 
 function renderCounts() {
   const open = state.stats.openIncidents;
@@ -357,7 +383,7 @@ function renderReviews() {
           <td><strong>${esc(t.name)}</strong><small>${esc(t.badge || '')} · ${t.status === 'on_site' ? 'on site' : 'left'}</small></td>
           <td>${esc(t.reason)}</td>
           <td>${formatTime(t.issuedAt)}<small>Gate ${esc(t.gate)} · ${esc(t.guardName || '')}${t.offline ? ' · offline' : ''}</small></td>
-          <td>${formatTime(t.validTo)}</td>
+          <td>${formatTime(t.validTo)}${t.token ? `<button class="link-button qr-link" data-temp-qr="${esc(t.id)}">${icon('qr')} QR</button>` : ''}</td>
           <td>${t.review
             ? `<span class="tag ${t.review.decision === 'revoked' ? 'tag-pass_reused' : ''}">${esc(t.review.decision)}</span><small>${esc(t.review.by)} · ${formatTime(t.review.at)}</small>`
             : `<div class="review-actions"><button class="btn btn-secondary" data-review="approved" data-pass="${esc(t.id)}">Approve</button><button class="btn btn-danger" data-review="revoked" data-pass="${esc(t.id)}">Revoke</button></div>`}</td>
@@ -365,51 +391,82 @@ function renderReviews() {
     </tbody>` : '<tbody><tr><td class="empty">No temporary passes issued.</td></tr></tbody>';
 }
 
+function checkDetails(c) {
+  const results = (c.results || []).map(r => {
+    const bad = r.result === 'fault' || r.result === 'short';
+    const value = r.type === 'count' ? `${r.count}/${r.expected}` : ({ ok: 'OK', fault: 'Fault', na: 'N/A' })[r.result] || r.result;
+    return `<li class="${bad ? 'is-bad' : ''}"><span class="check-result">${esc(value)}</span><span>${esc(r.label)}${r.note ? `<em>${esc(r.note)}</em>` : ''}</span></li>`;
+  }).join('');
+  return `
+    <div class="record-details">
+      ${results ? `<ul class="check-results">${results}</ul>` : ''}
+      ${c.notes ? `<p class="detail-text"><strong>Notes:</strong> ${esc(c.notes)}</p>` : '<p class="muted small">No notes added.</p>'}
+      ${c.photos?.length ? `<div class="detail-photos">${c.photos.map(src => `<a href="${esc(src)}" target="_blank" rel="noopener"><img src="${esc(src)}" alt=""></a>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+function shiftDetails(r) {
+  const s = r.summary || {};
+  const list = (title, items) => items?.length ? `<p class="detail-line"><strong>${title}:</strong> ${esc(items.join(', '))}</p>` : '';
+  return `
+    <div class="record-details">
+      ${r.notes ? `<p class="detail-text"><strong>Handover notes:</strong> ${esc(r.notes)}</p>` : '<p class="muted small">No handover notes.</p>'}
+      ${list('On site at handover', (s.onSite || []).map(v => `${v.name} (${v.badge || '—'})`))}
+      ${s.itemsOut?.length ? `<p class="detail-line detail-warn"><strong>Items still out:</strong> ${esc(s.itemsOut.map(i => `${i.item} with ${i.who}`).join(', '))}</p>` : ''}
+      ${s.itemsMissing?.length ? `<p class="detail-line detail-warn"><strong>Not returned this shift:</strong> ${esc(s.itemsMissing.map(i => `${i.item} (${i.who})`).join(', '))}</p>` : ''}
+      ${list('Refusals', (s.refusals || []).map(x => `${x.name || 'Unknown'}: ${x.reason}`))}
+      ${list('Temporary passes', (s.tempPasses || []).map(t => `${t.name} until ${formatTime(t.until)}`))}
+      ${list('Spot check failures', (s.spotFailures || []).map(f => `${f.name || 'Unknown'} in ${f.zone}`))}
+      ${list('Incidents', (s.incidents || []).map(i => `${i.title} (${i.severity})`))}
+      ${list('Site checks', (s.checks || []).map(c => `${c.name}: ${c.issues ? `${c.issues} issue(s)` : 'all clear'}`))}
+      ${list('Roll calls', (s.rollCalls || []).map(m => `${formatTime(m.at)} ${m.total - m.missing}/${m.total}`))}
+      ${s.pendingUpload ? `<p class="detail-line detail-warn">${s.pendingUpload} record(s) were still waiting to upload when this was written.</p>` : ''}
+      ${r.signature ? `<img class="detail-signature" src="${esc(r.signature)}" alt="Signature">` : ''}
+    </div>`;
+}
+
 function renderChecksAndShifts() {
   document.getElementById('check-list').innerHTML = state.checks.length
-    ? state.checks.slice(0, 30).map(c => {
+    ? state.checks.slice(0, 40).map(c => {
         const issues = c.faults.length + c.shortages.length;
         return `
-          <li class="record tone-${issues ? 'warn' : 'ok'} open">
-            <div class="record-row">
+          <li class="record tone-${issues ? 'warn' : 'ok'} ${openRecords.has(c.id) ? 'open' : ''}">
+            <button class="record-row" data-open-record="${esc(c.id)}">
               <span class="record-icon">${icon('clipboard')}</span>
               <span class="record-body">
-                <strong>${esc(c.checkName)}</strong>
-                <small>${issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'All clear'} · Gate ${esc(c.gate)} · ${esc(c.guardName || '')}</small>
+                <strong>${esc(c.checkName)}${c.test ? ' <span class="tag tag-test">TEST</span>' : ''}</strong>
+                <small>${issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'All clear'} · Gate ${esc(c.gate)} · ${esc(c.guardName || '')}${c.notes ? ' · has notes' : ''}</small>
                 <span class="record-meta">${formatDateTime(c.createdAt)}${c.recordedOffline ? ` · offline, synced +${formatDuration(delay(c))}` : ''}</span>
               </span>
-            </div>
-            ${issues ? `<div class="record-details">${c.faults.map(f => `<p class="detail-line detail-warn">Fault: ${esc(f.label)}${f.note ? ` (${esc(f.note)})` : ''}</p>`).join('')}${c.shortages.map(s => `<p class="detail-line detail-warn">Short: ${esc(s.label)} · ${s.count}/${s.expected}${s.note ? ` (${esc(s.note)})` : ''}</p>`).join('')}</div>` : ''}
+              ${icon('chevron')}
+            </button>
+            ${openRecords.has(c.id) ? checkDetails(c) : ''}
           </li>`;
       }).join('')
     : '<li class="empty">No checks yet.</li>';
 
   document.getElementById('shift-list').innerHTML = state.shiftReports.length
-    ? state.shiftReports.slice(0, 20).map(r => {
+    ? state.shiftReports.slice(0, 30).map(r => {
         const s = r.summary || {};
         return `
-          <li class="record tone-neutral open">
-            <div class="record-row">
+          <li class="record tone-neutral ${openRecords.has(r.id) ? 'open' : ''}">
+            <button class="record-row" data-open-record="${esc(r.id)}">
               <span class="record-icon">${icon('user')}</span>
               <span class="record-body">
                 <strong>${esc(r.guardName || '')} · ${esc(r.postName || `Gate ${r.gate}`)}</strong>
                 <small>${formatTime(s.shiftStart)}–${formatTime(s.shiftEnd)} · ${s.signIns ?? 0} in · ${s.signOuts ?? 0} out · ${s.refusals?.length ?? 0} refused · ${s.incidents?.length ?? 0} incidents</small>
-                <span class="record-meta">Handed over to ${esc(r.incomingOfficer || '—')}${r.recordedOffline ? ' · submitted offline' : ''}</span>
+                <span class="record-meta">Handed over to ${esc(r.incomingOfficer || '—')}${r.notes ? ' · has notes' : ''}${r.recordedOffline ? ' · submitted offline' : ''}</span>
               </span>
-            </div>
-            <div class="record-details">
-              ${r.notes ? `<p class="detail-text">${esc(r.notes)}</p>` : ''}
-              ${s.itemsOut?.length ? `<p class="detail-line detail-warn">Items still out: ${esc(s.itemsOut.map(i => `${i.item} (${i.who})`).join(', '))}</p>` : ''}
-              ${s.onSite?.length ? `<p class="detail-line">On site at handover: ${esc(s.onSite.map(v => v.name).join(', '))}</p>` : ''}
-              ${r.signature ? `<img class="detail-signature" src="${esc(r.signature)}" alt="Signature">` : ''}
-            </div>
+              ${icon('chevron')}
+            </button>
+            ${openRecords.has(r.id) ? shiftDetails(r) : ''}
           </li>`;
       }).join('')
     : '<li class="empty">No shift reports yet.</li>';
 }
 
 function notifyAlerts() {
-  const high = state.alerts.filter(a => a.severity === 'high');
+  const high = state.alerts.filter(a => a.severity === 'high' && !a.ack);
   document.title = high.length ? `(${high.length}) GatePass · Control room` : 'GatePass · Control room';
   const ids = new Set(high.map(a => a.id));
   if (knownHigh && [...ids].some(id => !knownHigh.has(id))) feedback('warn');
@@ -534,6 +591,11 @@ function passLink(token) {
   return `${location.origin}/pass#${token}`;
 }
 
+function passFor(visit) {
+  if (visit.tempPass?.token) return { id: visit.tempPass.id, name: `${visit.name} (temporary)`, token: visit.tempPass.token, temporary: true };
+  return state.invites.find(i => i.id === visit.passId) || null;
+}
+
 function showPass(invite) {
   const dialog = document.getElementById('pass-dialog');
   document.getElementById('pass-dialog-title').textContent = invite.name;
@@ -549,6 +611,9 @@ function showPass(invite) {
     }
   };
   document.getElementById('pass-dialog-copy').textContent = 'Copy link';
+  document.getElementById('pass-dialog-kind').textContent = invite.temporary
+    ? 'Temporary pass signed by the officer\'s phone. Scan it at any gate or in a spot check.'
+    : 'Visitor pass signed by this server. Scan it with a gate phone to test.';
   const tamperButton = document.getElementById('pass-dialog-tamper');
   tamperButton.textContent = 'Copy tampered pass (demo: validity stretched by 7 days, original signature kept)';
   tamperButton.onclick = async () => {
@@ -744,6 +809,53 @@ async function boot() {
     if (!chip) return;
     filter = chip.dataset.filter;
     renderFeed();
+  });
+
+  document.getElementById('alerts').addEventListener('click', async event => {
+    const button = event.target.closest('[data-ack]');
+    if (!button) return;
+    let note = null;
+    if (button.dataset.ack !== 'open') {
+      note = prompt(button.dataset.ack === 'false_alarm' ? 'Why is it a false alarm? (optional)' : 'What was done? (optional)', '');
+      if (note === null) return;
+    }
+    button.disabled = true;
+    try {
+      await api('/api/alerts/ack', { method: 'POST', body: JSON.stringify({ alertId: button.dataset.alert, status: button.dataset.ack, note }) });
+    } catch (err) {
+      alert(err.message);
+    }
+    await poll();
+  });
+  document.getElementById('alerts').addEventListener('toggle', event => {
+    if (event.target.matches('.handled-group details')) handledOpen = event.target.open;
+  }, true);
+
+  document.body.addEventListener('click', event => {
+    if (event.target.closest('#invites-more')) {
+      invitesExpanded = true;
+      renderInvites();
+      return;
+    }
+    const temp = event.target.closest('[data-temp-qr]');
+    if (temp) {
+      const t = state.tempPasses.find(x => x.id === temp.dataset.tempQr);
+      if (t?.token) showPass({ id: t.id, name: `${t.name} (temporary)`, token: t.token, temporary: true });
+      return;
+    }
+    const visitQr = event.target.closest('[data-visit-qr]');
+    if (visitQr) {
+      const visit = state.visits.find(v => v.visitId === visitQr.dataset.visitQr);
+      const pass = visit && passFor(visit);
+      if (pass) showPass(pass);
+      return;
+    }
+    const rec = event.target.closest('[data-open-record]');
+    if (rec) {
+      const id = rec.dataset.openRecord;
+      openRecords.has(id) ? openRecords.delete(id) : openRecords.add(id);
+      renderChecksAndShifts();
+    }
   });
 
   document.getElementById('feed').addEventListener('click', event => {

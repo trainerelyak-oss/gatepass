@@ -386,9 +386,9 @@ function handleBootstrap(url, res, user) {
       .map(({ id, name, type, company, host, validFrom, validTo, multiEntry, zones, escort, token }) => ({ id, name, type, company, host, validFrom, validTo, multiEntry, zones, escort, token })),
     visits: state.visits
       .filter(v => v.status === 'on_site' || v.checkinAt > dayAgo)
-      .map(({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass, checkinAt, checkinGate, status, checkoutAt, checkoutGate }) => ({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass: tempPass && { id: tempPass.id, validTo: tempPass.validTo, reason: tempPass.reason, review: tempPass.review }, checkinAt, checkinGate, status, checkoutAt, checkoutGate })),
+      .map(({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass, checkinAt, checkinGate, status, checkoutAt, checkoutGate }) => ({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, zones, escort, items, permitNo, tempPass: tempPass && { id: tempPass.id, token: tempPass.token, validTo: tempPass.validTo, reason: tempPass.reason, review: tempPass.review }, checkinAt, checkinGate, status, checkoutAt, checkoutGate })),
     deviceKeys: Object.values(db.deviceKeys).map(({ keyId, deviceId, jwk, gate, postName }) => ({ keyId, deviceId, jwk, gate, postName })),
-    revoked: Object.entries(db.reviews).filter(([, r]) => r.decision === 'revoked').map(([id]) => id),
+    revoked: Object.entries(db.reviews).filter(([id, r]) => r.decision === 'revoked' && !id.startsWith('alert:')).map(([id]) => id),
     incidents: state.incidents
       .filter(i => i.currentStatus !== 'closed' || i.updatedAt > threeDaysAgo)
       .map(i => ({
@@ -619,7 +619,7 @@ async function handleIncidentNote(req, res, incidentId, user) {
   const body = await readJson(req, res);
   if (!body) return;
   const text = String(body.text || '').trim().slice(0, 2000);
-  const status = ['open', 'investigating', 'escalated', 'closed'].includes(body.status) ? body.status : null;
+  const status = ['open', 'investigating', 'escalated', 'closed', 'false_alarm'].includes(body.status) ? body.status : null;
   if (!text && !status) return sendJson(res, 400, { error: 'Add a note or change the status' });
   const incident = Object.values(db.records).find(r => r.type === 'incident' && r.incidentId === incidentId);
   if (!incident) return sendJson(res, 404, { error: 'Incident not found' });
@@ -713,6 +713,17 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/reviews' && req.method === 'POST') {
       const user = requireRole(req, res, 'supervisor');
       return user && await handleReview(req, res, user);
+    }
+    if (pathname === '/api/alerts/ack' && req.method === 'POST') {
+      const user = requireRole(req, res, 'supervisor');
+      if (!user) return;
+      const body = await readJson(req, res);
+      if (!body) return;
+      if (!body.alertId || !['false_alarm', 'resolved', 'open'].includes(body.status)) return sendJson(res, 400, { error: 'alertId and status (false_alarm | resolved | open) required' });
+      const key = `alert:${String(body.alertId).slice(0, 200)}`;
+      db.reviews[key] = { status: body.status, note: String(body.note || '').slice(0, 300) || null, by: user.name, byUser: user.username, at: new Date().toISOString() };
+      save('reviews', key);
+      return sendJson(res, 200, db.reviews[key]);
     }
     const noteMatch = pathname.match(/^\/api\/incidents\/([\w-]+)\/notes$/);
     if (noteMatch && req.method === 'POST') {

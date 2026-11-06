@@ -1,6 +1,7 @@
 import { getMeta } from '../db.js';
 import { subscribe } from '../sync.js';
 import { signOutFlow } from './checkin.js';
+import { qrSvg } from '../qr.js';
 import { onSiteVisits } from '../visits.js';
 import { typeLabel, zoneList } from '../config.js';
 import { esc, icon, toast, formatTime, formatDuration, timeAgo } from '../ui.js';
@@ -11,6 +12,7 @@ export default async function onsite(root, ctx) {
   let busy = false;
   let open = null;
   let visits = [];
+  let invites = [];
   let lastCache = null;
 
   const FILTERS = [
@@ -83,6 +85,7 @@ export default async function onsite(root, ctx) {
             ${open === v.visitId ? `
               <div class="visit-actions">
                 <p class="small muted">${esc(zoneList(ctx.config, v.zones))}${v.escort ? ' · escort required' : ''}${v.permitNo ? ` · Permit ${esc(v.permitNo)}` : ''}${(v.items || []).filter(i => i.kind === 'issued').length ? ` · holding ${esc(v.items.filter(i => i.kind === 'issued').map(i => i.name).join(', '))}` : ''}</p>
+                ${passToken(v) ? `<button class="btn btn-secondary btn-block" data-show-pass="${esc(v.visitId)}">${icon('qr')} Show pass QR</button>` : ''}
                 <button class="btn btn-primary btn-block" data-signout="${esc(v.visitId)}">${icon('logOut')} Sign out</button>
               </div>` : ''}
           </li>`).join('')
@@ -92,6 +95,7 @@ export default async function onsite(root, ctx) {
   async function render() {
     visits = await onSiteVisits();
     const cache = await getMeta('siteCache');
+    invites = cache?.invites || [];
     lastCache = cache?.fetchedAt || null;
     root.innerHTML = `
       <div class="page-head">
@@ -122,8 +126,32 @@ export default async function onsite(root, ctx) {
   };
   document.addEventListener('keydown', onKey);
 
+  function passToken(v) {
+    if (v.tempPass?.token) return v.tempPass.token;
+    return invites.find(i => i.id === v.passId)?.token || null;
+  }
+
   root.addEventListener('click', async event => {
     if (busy) return;
+    const show = event.target.closest('[data-show-pass]');
+    if (show) {
+      const v = visits.find(x => x.visitId === show.dataset.showPass);
+      const token = v && passToken(v);
+      if (!token) return;
+      const dialog = document.createElement('dialog');
+      dialog.className = 'sheet';
+      dialog.innerHTML = `
+        <div class="sheet-inner">
+          <div class="sheet-head"><h2>${esc(v.name)}</h2><button type="button" class="icon-btn" data-close aria-label="Close">×</button></div>
+          <p class="muted small">${v.tempPass ? `Temporary pass ${esc(v.tempPass.id)} · until ${formatTime(v.tempPass.validTo)}` : `Pass ${esc(v.passId)}`}. Let the visitor photograph it again, or scan it with another gate.</p>
+          <div class="temp-qr center-qr">${qrSvg(token)}</div>
+        </div>`;
+      document.body.append(dialog);
+      dialog.querySelector('[data-close]').onclick = () => dialog.close();
+      dialog.addEventListener('close', () => dialog.remove());
+      dialog.showModal();
+      return;
+    }
     const chip = event.target.closest('[data-filter]');
     if (chip) {
       filter = chip.dataset.filter;

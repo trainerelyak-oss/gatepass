@@ -114,6 +114,7 @@
                 <option value="investigating">Investigating</option>
                 <option value="escalated">Escalated</option>
                 <option value="closed">Closed</option>
+                <option value="false_alarm">False alarm</option>
               </select>
               <button class="btn btn-primary" type="submit">Send to officers</button>
             </div>
@@ -188,6 +189,7 @@
         <h2 id="pass-dialog-title">Visitor pass</h2>
         <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
       </div>
+      <p class="muted small" id="pass-dialog-kind"></p>
       <div class="pass-dialog-qr" id="pass-dialog-qr"></div>
       <p class="pass-dialog-code mono" id="pass-dialog-code"></p>
       <div class="field-row">
@@ -195,6 +197,12 @@
         <button class="btn btn-secondary" id="pass-dialog-copy" type="button">Copy link</button>
       </div>
       <button class="btn btn-ghost btn-block" id="pass-dialog-tamper" type="button">Copy tampered pass (demo: validity stretched by 7 days, original signature kept)</button>
+      <details class="forgery-explain">
+        <summary>How forgery detection works</summary>
+        <p>The QR code holds the visit details (name, host, zones, valid times) plus a digital signature. The signature is made with a secret key that only this server has (for a temporary pass, the issuing officer's phone has its own key the server knows about), and it is mathematically tied to those exact details.</p>
+        <p>Every gate phone has the matching public key, which can check a signature but cannot create one. If anyone changes even one character, such as stretching the end time, the signature no longer matches and the phone refuses the pass, with no internet needed. Making a new valid signature would need the server's secret key.</p>
+        <p>"Copy tampered pass" makes exactly that kind of fake: it changes the end date and keeps the original signature, so you can show it being refused. An exact copy of a real pass is caught a different way: single-entry passes are blocked if already used, the ID check must match, and two gates admitting the same pass offline raises an alert when they sync.</p>
+      </details>
     </div>
   </dialog>
 

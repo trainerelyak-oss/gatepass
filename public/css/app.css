@@ -1479,3 +1479,6 @@ body.testing .toasts { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom
 .test-body .link-button .icon { width: 16px; height: 16px; }
 .test-label { display: inline-block; min-width: 50px; margin-right: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .testbar { flex-direction: column-reverse; }
+.badge.status-false_alarm { background: var(--subtle); color: var(--muted); }
+.center-qr { margin: 0 auto; background: #fff; border-radius: 12px; }
+.visit-actions .btn + .btn { margin-top: 8px; }

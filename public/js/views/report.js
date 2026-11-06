@@ -7,7 +7,7 @@ export default async function report(root, ctx) {
   const ids = new Set();
   const open = [...local, ...(cache?.incidents || [])]
     .filter(i => !ids.has(i.incidentId) && ids.add(i.incidentId))
-    .filter(i => (i.currentStatus || i.status) !== 'closed')
+    .filter(i => !['closed', 'false_alarm'].includes(i.currentStatus || i.status))
     .slice(0, 4);
   const lastChecks = (await recordsByType('inspection')).slice(0, 1);
 

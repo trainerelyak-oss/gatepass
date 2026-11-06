@@ -13,7 +13,8 @@ const STATUSES = [
   { id: 'open', label: 'Open' },
   { id: 'investigating', label: 'Investigating' },
   { id: 'escalated', label: 'Escalated (police / management)' },
-  { id: 'closed', label: 'Closed' }
+  { id: 'closed', label: 'Closed' },
+  { id: 'false_alarm', label: 'False alarm' }
 ];
 const CUSTODY = ['Security office evidence locker', 'Handed to police', 'Returned to owner', 'Photographed only, left in place', 'Other'];
 const WITNESS_ROLES = ['Visitor', 'Contractor', 'Staff / tenant', 'Member of public', 'Security officer'];
@@ -80,7 +81,7 @@ export default async function incidents(root, ctx) {
     current = null;
     const items = await loadIncidents();
     lastCache = (await getMeta('siteCache'))?.fetchedAt || null;
-    const open = items.filter(i => i.currentStatus !== 'closed');
+    const open = items.filter(i => i.currentStatus !== 'closed' && i.currentStatus !== 'false_alarm');
     root.innerHTML = `
       <a class="back-link" href="#report">← Report</a>
       <div class="page-head">
@@ -90,7 +91,7 @@ export default async function incidents(root, ctx) {
       <p class="muted small">${open.length} open</p>
       <ul class="record-list">
         ${items.length ? items.map(i => `
-          <li class="record tone-${i.severity === 'critical' || i.severity === 'high' ? 'danger' : i.currentStatus === 'closed' ? 'neutral' : 'warn'}">
+          <li class="record tone-${i.severity === 'critical' || i.severity === 'high' ? 'danger' : ['closed', 'false_alarm'].includes(i.currentStatus) ? 'neutral' : 'warn'}">
             <button class="record-row" data-open="${esc(i.incidentId)}">
               <span class="record-icon">${icon('alert')}</span>
               <span class="record-body">
