@@ -15,6 +15,9 @@ import shiftView from './views/shift.js';
 import logView from './views/log.js';
 import settingsView from './views/settings.js';
 import onboardingView from './views/onboarding.js';
+import { loadSession } from './session.js';
+import { initTestMode, refreshTestBar } from './testmode.js';
+import guideView from './views/guide.js';
 
 const routes = {
   gate: gateView,
@@ -24,6 +27,7 @@ const routes = {
   incidents: incidentsView,
   checks: checksView,
   report: reportView,
+  guide: guideView,
   shift: shiftView,
   log: logView,
   settings: settingsView
@@ -55,7 +59,7 @@ async function route() {
   previous.replaceWith(main);
   window.scrollTo(0, 0);
 
-  if (!ctx.guard) {
+  if (!ctx.guard || ctx.reauth) {
     document.body.classList.add('signed-out');
     const cleanup = await onboardingView(main, ctx);
     if (token === routeToken) teardown = cleanup || null;
@@ -64,7 +68,8 @@ async function route() {
 
   document.body.classList.remove('signed-out');
   const name = routes[location.hash.slice(1)] ? location.hash.slice(1) : 'gate';
-  const tab = { spot: 'onsite', shift: 'settings', log: 'settings', incidents: 'report', checks: 'report' }[name] || name;
+  const tab = { spot: 'onsite', shift: 'settings', log: 'settings', guide: 'settings', incidents: 'report', checks: 'report' }[name] || name;
+  refreshTestBar();
   document.querySelectorAll('.tabbar a').forEach(a => {
     a.classList.toggle('active', a.dataset.route === tab);
   });
@@ -104,7 +109,15 @@ function renderStatus(state) {
   const offline = tone === 'offline';
   const count = `${state.pending} record${state.pending === 1 ? '' : 's'}`;
 
-  if (offline) {
+  if (state.authError && ctx.guard && !ctx.reauth) {
+    strip.hidden = false;
+    strip.dataset.tone = 'offline';
+    stripIcon.innerHTML = icon('user');
+    stripText.textContent = `Signed out by the server. Sign in again to upload${state.pending ? ` (${count} kept on this device)` : ''}.`;
+    action.hidden = false;
+    action.textContent = 'Sign in';
+    action.dataset.mode = 'auth';
+  } else if (offline) {
     strip.hidden = false;
     strip.dataset.tone = 'offline';
     stripIcon.innerHTML = icon('cloudOff');
@@ -112,12 +125,15 @@ function renderStatus(state) {
       ? `No connection. ${count} saved on this device, will sync automatically.`
       : 'No connection. Keep working, everything is saved on this device.';
     action.hidden = true;
+    action.dataset.mode = '';
   } else if (state.pending) {
     strip.hidden = false;
     strip.dataset.tone = state.syncing ? 'syncing' : 'pending';
     stripIcon.innerHTML = icon('sync');
     stripText.textContent = state.syncing ? `Uploading ${count}…` : `${count} waiting to upload${state.lastError ? ` (${state.lastError})` : ''}`;
     action.hidden = state.syncing;
+    action.textContent = 'Sync now';
+    action.dataset.mode = '';
   } else {
     strip.hidden = true;
   }
@@ -178,11 +194,19 @@ async function boot() {
 
   if (!(await getMeta('deviceId'))) await setMeta('deviceId', uid());
   ctx.config = await loadConfig();
-  ctx.guard = (await getMeta('guard')) || null;
+  const session = await loadSession();
+  ctx.guard = session ? (await getMeta('guard')) || null : null;
 
   subscribe(renderStatus);
   document.getElementById('status').addEventListener('click', () => syncNow());
-  document.querySelector('.sync-strip-action').addEventListener('click', () => syncNow());
+  document.querySelector('.sync-strip-action').addEventListener('click', event => {
+    if (event.currentTarget.dataset.mode === 'auth') {
+      ctx.reauth = true;
+      route();
+      return;
+    }
+    syncNow();
+  });
   window.addEventListener('hashchange', () => {
     route();
     updateOnSiteBadge();
@@ -197,6 +221,7 @@ async function boot() {
   });
 
   route();
+  initTestMode(ctx);
   initSync();
   startLocationWatch();
   updateWakeLock();

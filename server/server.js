@@ -7,6 +7,7 @@ const path = require('path');
 const { loadSigningKey, passCode, issuePass, watchlistHash } = require('./passes');
 const { buildState } = require('./visits');
 const { openStore } = require('./store');
+const { ROLES, hashPassword, verifyPassword, createTokens, hasRole, publicUser, normaliseUsername } = require('./auth');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -40,6 +41,7 @@ let store;
 let db;
 let signingKey;
 let watchlist;
+let tokens;
 
 async function loadDb() {
   const data = await store.load();
@@ -52,11 +54,184 @@ function save(collection, id) {
   store.put(collection, id, db[collection][id]);
 }
 
-function loadWatchlist() {
+const loginFailures = new Map();
+
+function bearer(req) {
+  const header = req.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
+}
+
+function currentUser(req) {
+  const payload = tokens.read(bearer(req));
+  const user = payload && db.users[payload.uid];
+  if (!user || !user.active || (user.tokenVersion || 0) !== payload.ver) return null;
+  return user;
+}
+
+function requireRole(req, res, role) {
+  const user = currentUser(req);
+  if (!user) {
+    sendJson(res, 401, { error: 'Please sign in', code: 'auth' });
+    return null;
+  }
+  if (!hasRole(user, role)) {
+    sendJson(res, 403, { error: `Needs ${ROLES[role].label.toLowerCase()} access`, code: 'forbidden' });
+    return null;
+  }
+  return user;
+}
+
+function activeAdmins() {
+  return Object.values(db.users).filter(u => u.active && u.role === 'admin');
+}
+
+function createUser({ name, username, password, role }, by) {
+  const uname = normaliseUsername(username);
+  if (uname.length < 3) throw inviteError('Username needs at least 3 letters or numbers');
+  if (Object.values(db.users).some(u => u.username === uname)) throw inviteError('That username is already taken');
+  if (String(password || '').length < 6) throw inviteError('Password needs at least 6 characters');
+  if (!ROLES[role]) throw inviteError('Pick a role: officer, supervisor or admin');
+  const id = crypto.randomUUID();
+  db.users[id] = {
+    id,
+    username: uname,
+    name: String(name || uname).trim().slice(0, 60) || uname,
+    role,
+    active: true,
+    passwordHash: hashPassword(password),
+    tokenVersion: 0,
+    createdAt: new Date().toISOString(),
+    createdBy: by || null
+  };
+  save('users', id);
+  return db.users[id];
+}
+
+function session(user) {
+  return { token: tokens.issue(user), user: publicUser(user) };
+}
+
+async function handleAuth(pathname, req, res) {
+  if (pathname === '/api/auth/status') {
+    return sendJson(res, 200, { needsSetup: Object.keys(db.users).length === 0, site: site.site.name });
+  }
+  if (pathname === '/api/auth/me') {
+    const user = requireRole(req, res, 'officer');
+    return user && sendJson(res, 200, { user: publicUser(user) });
+  }
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
+  const body = await readJson(req, res);
+  if (!body) return;
+
+  if (pathname === '/api/auth/setup') {
+    if (Object.keys(db.users).length) return sendJson(res, 403, { error: 'Setup is already done. Sign in instead.' });
+    try {
+      const user = createUser({ ...body, role: 'admin' }, 'setup');
+      return sendJson(res, 201, session(user));
+    } catch (err) {
+      return sendJson(res, err.status || 500, { error: err.message });
+    }
+  }
+
+  if (pathname === '/api/auth/login') {
+    const username = normaliseUsername(body.username);
+    const recent = (loginFailures.get(username) || []).filter(t => Date.now() - t < 5 * 60000);
+    if (recent.length >= 5) return sendJson(res, 429, { error: 'Too many attempts. Wait 5 minutes and try again.' });
+    const user = Object.values(db.users).find(u => u.username === username);
+    if (!user || !user.active || !verifyPassword(body.password, user.passwordHash)) {
+      loginFailures.set(username, [...recent, Date.now()]);
+      return sendJson(res, 401, { error: 'Wrong username or password' });
+    }
+    loginFailures.delete(username);
+    user.lastLoginAt = new Date().toISOString();
+    save('users', user.id);
+    return sendJson(res, 200, session(user));
+  }
+  return sendJson(res, 404, { error: 'Unknown endpoint' });
+}
+
+async function handleUsers(pathname, req, res, admin) {
+  if (pathname === '/api/users' && req.method === 'GET') {
+    return sendJson(res, 200, { users: Object.values(db.users).map(publicUser).sort((a, b) => a.name.localeCompare(b.name)) });
+  }
+  const body = req.method === 'GET' ? {} : await readJson(req, res);
+  if (!body) return;
+  try {
+    if (pathname === '/api/users' && req.method === 'POST') {
+      return sendJson(res, 201, { user: publicUser(createUser(body, admin.username)) });
+    }
+    const match = pathname.match(/^\/api\/users\/([\w-]+)$/);
+    const user = match && db.users[match[1]];
+    if (!user || req.method !== 'PATCH') return sendJson(res, 404, { error: 'User not found' });
+    const losingAdmin = user.role === 'admin' && user.active && ((body.role && body.role !== 'admin') || body.active === false);
+    if (losingAdmin && activeAdmins().length <= 1) throw inviteError('Keep at least one active admin');
+    if (body.name) user.name = String(body.name).trim().slice(0, 60);
+    if (body.role) {
+      if (!ROLES[body.role]) throw inviteError('Unknown role');
+      if (body.role !== user.role) user.tokenVersion = (user.tokenVersion || 0) + 1;
+      user.role = body.role;
+    }
+    if (typeof body.active === 'boolean') {
+      if (!body.active) user.tokenVersion = (user.tokenVersion || 0) + 1;
+      user.active = body.active;
+    }
+    if (body.password) {
+      if (String(body.password).length < 6) throw inviteError('Password needs at least 6 characters');
+      user.passwordHash = hashPassword(body.password);
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
+    }
+    save('users', user.id);
+    return sendJson(res, 200, { user: publicUser(user) });
+  } catch (err) {
+    return sendJson(res, err.status || 500, { error: err.message });
+  }
+}
+
+async function handleWatchlist(pathname, req, res, admin) {
+  if (req.method === 'GET') {
+    return sendJson(res, 200, { entries: Object.values(db.watchlist).sort((a, b) => a.name.localeCompare(b.name)) });
+  }
+  if (req.method === 'POST') {
+    const body = await readJson(req, res);
+    if (!body) return;
+    const name = String(body.name || '').trim().slice(0, 60);
+    const partialId = String(body.partialId || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (!name) return sendJson(res, 400, { error: 'Name is required' });
+    if (!/^\d{3}[A-Z]$/.test(partialId)) return sendJson(res, 400, { error: 'ID must be the last 3 digits and letter, e.g. 123B' });
+    const id = crypto.randomUUID();
+    db.watchlist[id] = { id, name, partialId, level: body.level === 'alert' ? 'alert' : 'deny', reason: String(body.reason || '').slice(0, 200), addedBy: admin.username, addedAt: new Date().toISOString() };
+    save('watchlist', id);
+    watchlist = loadWatchlist();
+    return sendJson(res, 201, { entry: db.watchlist[id] });
+  }
+  const match = pathname.match(/^\/api\/watchlist\/([\w-]+)$/);
+  if (req.method === 'DELETE' && match && db.watchlist[match[1]]) {
+    delete db.watchlist[match[1]];
+    store.remove('watchlist', match[1]);
+    watchlist = loadWatchlist();
+    return sendJson(res, 200, { ok: true });
+  }
+  return sendJson(res, 404, { error: 'Not found' });
+}
+
+function seedWatchlist() {
+  if (db.watchlistSeeded) return;
   let entries = [];
   try {
     entries = JSON.parse(fs.readFileSync(path.join(__dirname, 'watchlist.json'), 'utf8'));
   } catch {}
+  store.transaction(() => {
+    for (const entry of entries) {
+      const id = crypto.randomUUID();
+      db.watchlist[id] = { id, name: entry.name, partialId: entry.partialId, level: entry.level, reason: entry.reason || '', addedBy: 'setup', addedAt: new Date().toISOString() };
+      save('watchlist', id);
+    }
+    store.setMeta('watchlistSeeded', (db.watchlistSeeded = true));
+  });
+}
+
+function loadWatchlist() {
+  const entries = Object.values(db.watchlist || {});
   const hashed = entries.map(entry => ({
     h: watchlistHash(db.salt, entry.name, entry.partialId),
     level: entry.level === 'deny' ? 'deny' : 'alert',
@@ -136,7 +311,7 @@ async function storePhotos(record) {
   return { photos, integrity };
 }
 
-async function handleSync(req, res) {
+async function handleSync(req, res, user) {
   let body;
   try {
     body = JSON.parse((await readBody(req)) || '{}');
@@ -170,6 +345,7 @@ async function handleSync(req, res) {
       photos,
       ...(integrity.length ? { photoIntegrity: integrity } : {}),
       deviceId: record.deviceId || body.device?.deviceId || null,
+      syncedBy: user.username,
       receivedAt: existing ? existing.receivedAt : receivedAt,
       updatedAt: receivedAt
     };
@@ -185,7 +361,7 @@ function currentState() {
   return buildState(db, watchlist.reasons);
 }
 
-function handleBootstrap(url, res) {
+function handleBootstrap(url, res, user) {
   const now = new Date();
   touchDevice({
     deviceId: url.searchParams.get('deviceId'),
@@ -201,6 +377,7 @@ function handleBootstrap(url, res) {
   sendJson(res, 200, {
     serverTime: now.toISOString(),
     epoch: db.epoch,
+    me: publicUser(user),
     keyId: signingKey.keyId,
     publicKey: signingKey.publicJwk,
     watchlist: watchlist.public,
@@ -237,7 +414,7 @@ function inviteError(message) {
   return err;
 }
 
-async function handleCreateInvite(req, res) {
+async function handleCreateInvite(req, res, user) {
   let body;
   try {
     body = JSON.parse((await readBody(req)) || '{}');
@@ -245,7 +422,7 @@ async function handleCreateInvite(req, res) {
     return sendJson(res, 400, { error: 'Invalid JSON' });
   }
   try {
-    const invite = createInvite(body);
+    const invite = createInvite({ ...body, createdBy: user.username });
     sendJson(res, 201, invite);
   } catch (err) {
     sendJson(res, err.status || 500, { error: err.message });
@@ -281,6 +458,7 @@ function createInvite(body) {
     multiEntry: Boolean(body.multiEntry),
     zones,
     escort: Boolean(body.escort),
+    createdBy: body.createdBy || null,
     createdAt: new Date().toISOString()
   };
   invite.token = issuePass(signingKey, invite, site.site.id);
@@ -330,7 +508,55 @@ function seedCheckin(fields, minutesAgo) {
   save('records', id);
 }
 
-async function handleDemoSeed(res) {
+const DEMO_ACCOUNTS = [
+  { username: 'officer', name: 'Daniel Tan', role: 'officer', password: 'officer123' },
+  { username: 'officer2', name: 'Siti Rahman', role: 'officer', password: 'officer123' },
+  { username: 'supervisor', name: 'Kumar S.', role: 'supervisor', password: 'super123' }
+];
+
+const FAKE_FIRST = ['Aaron', 'Bee Lian', 'Chandra', 'Daniel', 'Elaine', 'Faisal', 'Grace', 'Hafiz', 'Irene', 'Jun Wei', 'Kavitha', 'Leon', 'Mei Xin', 'Nabil', 'Oliver', 'Priyanka', 'Qi Hui', 'Rashid', 'Shu Fen', 'Terence'];
+const FAKE_LAST = ['Tan', 'Lim', 'Ng', 'Wong', 'Rahman', 'Kumar', 'Lee', 'Goh', 'Chua', 'Ismail', 'Singh', 'Ong'];
+const FAKE_HOSTS = ['Acme Pte Ltd, #12-03', 'HR, #08-01', 'Facilities, L1', 'Lumen Labs, #05-11', 'Building management'];
+
+async function handleFakeVisitors(req, res) {
+  const body = await readJson(req, res);
+  if (!body) return;
+  const count = Math.min(Math.max(Number(body.count) || 5, 1), 50);
+  const pick = list => list[crypto.randomInt(list.length)];
+  store.transaction(() => {
+    for (let i = 0; i < count; i++) {
+      const type = pick(['visitor', 'visitor', 'contractor', 'delivery']);
+      const gate = pick(['A', 'B', 'C']);
+      seedCheckin({
+        test: true,
+        badge: `${gate}${String(900 + crypto.randomInt(99)).padStart(3, '0')}`,
+        gate,
+        guardName: 'Test data',
+        guardId: 'TEST',
+        name: `${pick(FAKE_FIRST)} ${pick(FAKE_LAST)}`,
+        partialId: `${String(crypto.randomInt(1000)).padStart(3, '0')}${String.fromCharCode(65 + crypto.randomInt(26))}`,
+        visitorType: type,
+        host: pick(FAKE_HOSTS),
+        company: type === 'visitor' ? null : pick(['Kinetic M&E', 'Swift Logistics', 'ABC Engineering']),
+        method: 'walkin',
+        zones: site.defaultZones[type] || ['common'],
+        escort: false,
+        items: type === 'contractor' ? [{ kind: 'issued', name: 'Access card', ref: `AC-${300 + crypto.randomInt(99)}` }] : [],
+        permitNo: type === 'contractor' ? `PTW-TEST-${100 + crypto.randomInt(899)}` : null
+      }, crypto.randomInt(5, 240));
+    }
+  });
+  sendJson(res, 200, { ok: true, added: count });
+}
+
+async function handleDemoSeed(res, admin) {
+  const accounts = [];
+  for (const account of DEMO_ACCOUNTS) {
+    if (!Object.values(db.users).some(u => u.username === account.username)) {
+      createUser(account, admin.username);
+      accounts.push(account);
+    }
+  }
   const now = Date.now();
   const hour = 60 * 60 * 1000;
   const priya = createInvite({ name: 'Priya Nair', type: 'visitor', host: 'Acme Pte Ltd, #12-03', partialId: '101D', validFrom: new Date(now - 0.5 * hour).toISOString(), validTo: new Date(now + 6 * hour).toISOString() });
@@ -340,7 +566,7 @@ async function handleDemoSeed(res) {
   seedCheckin({ badge: 'C001', gate: 'C', guardName: 'Ahmad Razak', guardId: 'SO-2210', name: 'Mei Ling Goh', partialId: '238H', visitorType: 'visitor', host: 'Acme Pte Ltd, #12-03', company: null, method: 'walkin', zones: ['common', 'office'], escort: false, items: [{ kind: 'issued', name: 'Visitor lanyard', ref: '' }], permitNo: null }, 45);
   seedCheckin({ badge: 'B001', gate: 'B', guardName: 'Siti Rahman', guardId: 'SO-1877', name: 'Ahmad Bin Ismail', partialId: '774J', visitorType: 'contractor', host: 'M&E works, L4 plant room', company: 'Kinetic M&E', method: 'walkin', zones: ['common', 'loading', 'plant'], escort: false, items: [{ kind: 'issued', name: 'Access card', ref: 'AC-208' }, { kind: 'declared', name: 'Power tools', ref: 'Drill + grinder' }], permitNo: 'PTW-2026-0398', induction: { items: site.induction, acknowledgedAt: new Date(now - 80 * 60000).toISOString(), signature: null, permitNo: 'PTW-2026-0398' } }, 80);
   });
-  sendJson(res, 200, { ok: true, passes: { priya: priya.id, john: john.id } });
+  sendJson(res, 200, { ok: true, passes: { priya: priya.id, john: john.id }, accounts: accounts.map(({ username, password, role }) => ({ username, password, role })) });
 }
 
 async function readJson(req, res) {
@@ -372,7 +598,7 @@ async function handleDeviceKey(req, res) {
   sendJson(res, 201, { ok: true });
 }
 
-async function handleReview(req, res) {
+async function handleReview(req, res, user) {
   const body = await readJson(req, res);
   if (!body) return;
   if (!body.passId || !['approved', 'revoked'].includes(body.decision)) {
@@ -381,14 +607,15 @@ async function handleReview(req, res) {
   db.reviews[body.passId] = {
     decision: body.decision,
     note: String(body.note || '').slice(0, 300) || null,
-    by: String(body.by || 'Control room').slice(0, 60),
+    by: user.name,
+    byUser: user.username,
     at: new Date().toISOString()
   };
   save('reviews', body.passId);
   sendJson(res, 200, db.reviews[body.passId]);
 }
 
-async function handleIncidentNote(req, res, incidentId) {
+async function handleIncidentNote(req, res, incidentId, user) {
   const body = await readJson(req, res);
   if (!body) return;
   const text = String(body.text || '').trim().slice(0, 2000);
@@ -405,7 +632,7 @@ async function handleIncidentNote(req, res, incidentId) {
     text,
     status,
     source: 'control',
-    guardName: String(body.by || 'Control room').slice(0, 60),
+    guardName: user.name,
     gate: null,
     createdAt: now,
     receivedAt: now,
@@ -456,36 +683,56 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/health') {
       return sendJson(res, 200, { ok: true, serverTime: new Date().toISOString() });
     }
-    if (pathname === '/api/sync' && req.method === 'POST') {
-      return await handleSync(req, res);
+    if (pathname.startsWith('/api/auth/')) {
+      return await handleAuth(pathname, req, res);
     }
-    if (pathname === '/api/records' && req.method === 'GET') {
-      return handleRecords(url, res);
+    if (pathname === '/api/sync' && req.method === 'POST') {
+      const user = requireRole(req, res, 'officer');
+      return user && await handleSync(req, res, user);
     }
     if (pathname === '/api/bootstrap' && req.method === 'GET') {
-      return handleBootstrap(url, res);
-    }
-    if (pathname === '/api/state' && req.method === 'GET') {
-      return sendJson(res, 200, { ...currentState(), serverTime: new Date().toISOString() });
-    }
-    if (pathname === '/api/invites' && req.method === 'POST') {
-      return await handleCreateInvite(req, res);
-    }
-    if (pathname === '/api/demo/reset' && req.method === 'POST') {
-      return await handleDemoReset(res);
-    }
-    if (pathname === '/api/demo/seed' && req.method === 'POST') {
-      return await handleDemoSeed(res);
+      const user = requireRole(req, res, 'officer');
+      return user && handleBootstrap(url, res, user);
     }
     if (pathname === '/api/devices/key' && req.method === 'POST') {
-      return await handleDeviceKey(req, res);
+      const user = requireRole(req, res, 'officer');
+      return user && await handleDeviceKey(req, res);
+    }
+    if (pathname === '/api/records' && req.method === 'GET') {
+      const user = requireRole(req, res, 'supervisor');
+      return user && handleRecords(url, res);
+    }
+    if (pathname === '/api/state' && req.method === 'GET') {
+      const user = requireRole(req, res, 'supervisor');
+      return user && sendJson(res, 200, { ...currentState(), serverTime: new Date().toISOString(), me: publicUser(user) });
+    }
+    if (pathname === '/api/invites' && req.method === 'POST') {
+      const user = requireRole(req, res, 'supervisor');
+      return user && await handleCreateInvite(req, res, user);
     }
     if (pathname === '/api/reviews' && req.method === 'POST') {
-      return await handleReview(req, res);
+      const user = requireRole(req, res, 'supervisor');
+      return user && await handleReview(req, res, user);
     }
     const noteMatch = pathname.match(/^\/api\/incidents\/([\w-]+)\/notes$/);
     if (noteMatch && req.method === 'POST') {
-      return await handleIncidentNote(req, res, noteMatch[1]);
+      const user = requireRole(req, res, 'supervisor');
+      return user && await handleIncidentNote(req, res, noteMatch[1], user);
+    }
+    if (pathname === '/api/users' || pathname.startsWith('/api/users/')) {
+      const user = requireRole(req, res, 'admin');
+      return user && await handleUsers(pathname, req, res, user);
+    }
+    if (pathname === '/api/watchlist' || pathname.startsWith('/api/watchlist/')) {
+      const user = requireRole(req, res, 'admin');
+      return user && await handleWatchlist(pathname, req, res, user);
+    }
+    if (pathname.startsWith('/api/demo/') && req.method === 'POST') {
+      const user = requireRole(req, res, 'admin');
+      if (!user) return;
+      if (pathname === '/api/demo/reset') return await handleDemoReset(res);
+      if (pathname === '/api/demo/seed') return await handleDemoSeed(res, user);
+      if (pathname === '/api/demo/fake-visitors') return await handleFakeVisitors(req, res);
     }
     if (pathname.startsWith('/api/')) {
       return sendJson(res, 404, { error: 'Unknown endpoint' });
@@ -519,6 +766,14 @@ const server = http.createServer(async (req, res) => {
 async function main() {
   store = await openStore(DATA_DIR);
   db = await loadDb();
+  for (const name of ['users', 'watchlist']) db[name] = db[name] || {};
+  if (!db.authSecret) store.setMeta('authSecret', (db.authSecret = crypto.randomBytes(32).toString('base64')));
+  tokens = createTokens(db.authSecret);
+  if (!Object.keys(db.users).length && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+    createUser({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD, name: 'Administrator', role: 'admin' }, 'env');
+    console.log(`  Created admin account "${normaliseUsername(process.env.ADMIN_USERNAME)}" from environment`);
+  }
+  seedWatchlist();
   signingKey = loadSigningKey(DATA_DIR, db.signingKey, jwks => store.setMeta('signingKey', (db.signingKey = jwks)));
   watchlist = loadWatchlist();
   server.listen(PORT, onListening);

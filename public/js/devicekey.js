@@ -28,12 +28,12 @@ export async function deviceKey() {
   return key;
 }
 
-export async function registerDeviceKey(device) {
+export async function registerDeviceKey(device, headers = {}) {
   const key = await deviceKey();
   if (!key || key.registered) return;
   const res = await fetch('/api/devices/key', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ deviceId: device.deviceId, keyId: key.keyId, jwk: key.jwk, gate: device.gate, postName: device.postName })
   });
   if (res.ok) await setMeta('deviceKey', { ...key, registered: true });

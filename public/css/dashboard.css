@@ -278,3 +278,43 @@ body.dashboard { padding-bottom: 32px; }
 .connect-url { text-align: center; font-size: 14px; word-break: break-all; }
 .device-state small { display: block; color: var(--warn); font-weight: 600; }
 .dash-panel-head .link-button { padding: 0; }
+
+.admin-only { display: none !important; }
+body.is-admin .admin-only { display: inline-flex !important; }
+body.is-admin .dash-tabs .admin-only { display: inline-block !important; }
+
+.user-chip {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--subtle);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auth-screen { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--bg); }
+.auth-card { width: min(400px, 100%); padding: 28px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.auth-card h1 { font-size: 24px; }
+.auth-mark { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 14px; background: var(--chrome); color: var(--accent); }
+.auth-mark .icon { width: 28px; height: 28px; }
+.auth-error { padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--danger); font-size: 14px; }
+
+.add-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.add-form h3 { font-size: 15px; }
+.add-form input, .add-form select { min-height: 42px !important; padding: 8px 12px !important; font-size: 14px !important; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.onsite-table select { min-height: 36px; padding: 4px 8px; font-size: 13px; }
+tr.is-muted td { opacity: 0.55; }
+.watch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.watch-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.watch-main { flex: 1; display: flex; flex-direction: column; }
+.watch-main small { color: var(--muted); font-size: 13px; }
+.tag-test { background: rgb(139 92 246 / 20%); color: #b69cff; }
+.roles-table { width: 100%; border-collapse: collapse; }
+.roles-table td { padding: 6px 4px; border-top: 1px solid var(--line); font-size: 13px; }
+.onsite-table select { min-width: 150px; }
+#users-table td:first-child { min-width: 140px; }

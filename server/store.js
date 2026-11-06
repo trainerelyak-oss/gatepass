@@ -2,7 +2,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
-const COLLECTIONS = ['records', 'invites', 'devices', 'deviceKeys', 'reviews'];
+const COLLECTIONS = ['records', 'invites', 'devices', 'deviceKeys', 'reviews', 'users', 'watchlist'];
 
 function loadSqlite() {
   const listeners = process.listeners('warning');
@@ -94,6 +94,9 @@ function sqliteStore(DatabaseSync, dataDir) {
     setMeta(key, value) {
       setMetaStmt.run(key, JSON.stringify(value));
     },
+    remove(collection, id) {
+      sql.prepare(`DELETE FROM ${collection} WHERE id = ?`).run(id);
+    },
     clear(collection) {
       sql.exec(`DELETE FROM ${collection}`);
       if (collection === 'records') sql.exec('DELETE FROM record_index');
@@ -168,6 +171,10 @@ function jsonStore(dataDir) {
       data[key] = value;
       schedule();
     },
+    remove(collection, id) {
+      delete data[collection][id];
+      schedule();
+    },
     clear(collection) {
       data[collection] = {};
       schedule();
@@ -182,6 +189,8 @@ const SUPABASE_TABLES = {
   devices: 'gp_devices',
   deviceKeys: 'gp_device_keys',
   reviews: 'gp_reviews',
+  users: 'gp_users',
+  watchlist: 'gp_watchlist',
   meta: 'gp_meta',
   photos: 'gp_photos'
 };
@@ -193,6 +202,7 @@ async function supabaseStore(baseUrl, key) {
 
   const pending = Object.fromEntries(Object.keys(SUPABASE_TABLES).map(name => [name, new Map()]));
   const clearing = new Set();
+  const deletes = Object.fromEntries(Object.keys(SUPABASE_TABLES).map(name => [name, new Set()]));
   let flushing = null;
   let timer = null;
   let failures = 0;
@@ -224,7 +234,10 @@ async function supabaseStore(baseUrl, key) {
   async function selectAll(name) {
     const rows = [];
     for (let offset = 0; ; offset += 1000) {
-      const page = await request('GET', `${SUPABASE_TABLES[name]}?select=id,data&order=id&limit=1000&offset=${offset}`);
+      const page = await request('GET', `${SUPABASE_TABLES[name]}?select=id,data&order=id&limit=1000&offset=${offset}`).catch(err => {
+        if (err.status === 404) throw new Error(`Supabase table ${SUPABASE_TABLES[name]} is missing. Run the latest supabase/schema.sql again in the SQL Editor (it is safe to re-run).`);
+        throw err;
+      });
       rows.push(...page);
       if (page.length < 1000) return rows;
     }
@@ -235,6 +248,11 @@ async function supabaseStore(baseUrl, key) {
       if (clearing.has(name)) {
         await request('DELETE', `${SUPABASE_TABLES[name]}?id=not.is.null`, undefined, { Prefer: 'return=minimal' });
         clearing.delete(name);
+      }
+      if (deletes[name].size) {
+        const ids = [...deletes[name]];
+        await request('DELETE', `${SUPABASE_TABLES[name]}?id=in.(${ids.map(id => `"${id}"`).join(',')})`, undefined, { Prefer: 'return=minimal' });
+        ids.forEach(id => deletes[name].delete(id));
       }
       const queue = pending[name];
       while (queue.size) {
@@ -309,6 +327,11 @@ async function supabaseStore(baseUrl, key) {
     },
     setMeta(key, value) {
       pending.meta.set(key, { data: value });
+      schedule();
+    },
+    remove(collection, id) {
+      pending[collection].delete(id);
+      deletes[collection].add(id);
       schedule();
     },
     clear(collection) {

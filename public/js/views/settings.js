@@ -3,6 +3,8 @@ import { subscribe, setSimulatedOffline, syncNow } from '../sync.js';
 import { esc, icon, timeAgo, toast } from '../ui.js';
 import { postLabel } from '../config.js';
 import { currentTheme, setTheme } from '../theme.js';
+import { signOut } from '../session.js';
+import { testModeOn, setTestMode } from '../testmode.js';
 import { soundEnabled, setSound, feedback } from '../feedback.js';
 
 export default async function settings(root, ctx) {
@@ -18,6 +20,7 @@ export default async function settings(root, ctx) {
         <strong>${esc(ctx.guard.name)}</strong>
         <small>${esc(ctx.guard.id)} · on shift since ${new Date(ctx.guard.signedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
         <small>${esc(postLabel(ctx.config, ctx.guard))}</small>
+        <span class="role-chip role-${esc(ctx.guard.role || 'officer')}">${esc(ctx.guard.roleLabel || 'Security officer')}</span>
       </div>
     </section>
 
@@ -57,6 +60,13 @@ export default async function settings(root, ctx) {
       </div>
       <label class="switch-row">
         <span>
+          <strong>Test mode</strong>
+          <small>Floating TEST button with online/offline switch and fake visitors</small>
+        </span>
+        <input type="checkbox" class="switch" data-action="testmode" ${testModeOn() ? 'checked' : ''}>
+      </label>
+      <label class="switch-row">
+        <span>
           <strong>Sounds</strong>
           <small>Beep on valid, refused and warning results. Phones also vibrate.</small>
         </span>
@@ -69,6 +79,8 @@ export default async function settings(root, ctx) {
 
     <section class="stack">
       <a class="btn btn-primary btn-block" href="#shift">${icon('clipboard')} End-of-shift report</a>
+      ${['supervisor', 'admin'].includes(ctx.guard.role) ? `<a class="btn btn-secondary btn-block" href="/dashboard" target="_blank" rel="noopener">${icon('shield')} Open control room</a>` : ''}
+      <a class="btn btn-secondary btn-block" href="#guide">${icon('check')} Demo &amp; test guide</a>
       <a class="btn btn-secondary btn-block" href="#log">${icon('list')} Gate log</a>
       <button class="btn btn-ghost btn-block" data-action="signout">End shift / change post</button>
       <button class="btn btn-ghost btn-block danger-text" data-action="wipe">Erase records on this device</button>
@@ -89,6 +101,11 @@ export default async function settings(root, ctx) {
   });
 
   toggle.addEventListener('change', () => setSimulatedOffline(toggle.checked));
+
+  root.querySelector('[data-action="testmode"]').addEventListener('change', event => {
+    setTestMode(event.target.checked);
+    toast(event.target.checked ? 'Test mode on. Use the TEST button at the bottom right.' : 'Test mode off', 'ok');
+  });
 
   root.querySelector('[data-action="sound"]').addEventListener('change', event => {
     setSound(event.target.checked);
@@ -118,6 +135,7 @@ export default async function settings(root, ctx) {
         : 'End your shift on this device?';
       if (!confirm(message)) return;
       await setMeta('guard', null);
+      await signOut();
       ctx.guard = null;
       ctx.navigate('gate');
     } else if (action === 'wipe') {

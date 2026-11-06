@@ -1,5 +1,6 @@
 import { pendingRecords, countPending, markSynced, getMeta, setMeta, clearRecords } from './db.js';
 import { registerDeviceKey } from './devicekey.js';
+import { authHeaders } from './session.js';
 
 const MAX_BATCH_BYTES = 3 * 1024 * 1024;
 const MAX_BATCH_RECORDS = 20;
@@ -13,8 +14,18 @@ const state = {
   pending: 0,
   lastSync: null,
   lastError: null,
+  authError: false,
   cacheUpdatedAt: null
 };
+
+function checkAuth(res) {
+  if (res.status === 401) {
+    state.authError = true;
+    const err = new Error('Signed out on the server');
+    err.auth = true;
+    throw err;
+  }
+}
 
 const listeners = new Set();
 let inFlight = null;
@@ -106,7 +117,7 @@ async function deviceInfo() {
 async function pullSiteCache() {
   const device = await deviceInfo();
   try {
-    await registerDeviceKey(device);
+    await registerDeviceKey(device, authHeaders());
   } catch {}
   const params = new URLSearchParams({
     deviceId: device.deviceId || '',
@@ -118,7 +129,8 @@ async function pullSiteCache() {
   });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
-  const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store', signal: controller.signal }).finally(() => clearTimeout(timer));
+  const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store', signal: controller.signal, headers: authHeaders() }).finally(() => clearTimeout(timer));
+  checkAuth(res);
   if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   const previous = await getMeta('siteCache');
@@ -136,6 +148,14 @@ async function pullSiteCache() {
 async function run() {
   await refreshPending();
   const reachable = await checkServer();
+  if (!authHeaders().Authorization) {
+    emit();
+    return;
+  }
+  if (state.authError) {
+    emit();
+    return;
+  }
   if (!reachable) {
     emit();
     return;
@@ -169,10 +189,11 @@ async function run() {
       const res = await fetch('/api/sync', {
         signal: controller.signal,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ device, records: batch.map(payload) })
       });
       clearTimeout(timer);
+      checkAuth(res);
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       const { accepted, serverTime } = await res.json();
       const sent = batch
@@ -188,7 +209,7 @@ async function run() {
     await setMeta('lastSync', state.lastSync);
   } catch (err) {
     state.lastError = err.message || 'Sync failed';
-    state.reachable = false;
+    if (!err.auth) state.reachable = false;
   } finally {
     state.syncing = false;
     await refreshPending();
@@ -196,7 +217,8 @@ async function run() {
   }
 }
 
-export function syncNow() {
+export function syncNow(resetAuth = false) {
+  if (resetAuth) state.authError = false;
   if (!inFlight) inFlight = run().finally(() => { inFlight = null; });
   return inFlight;
 }

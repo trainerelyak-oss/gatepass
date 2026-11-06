@@ -3,6 +3,7 @@ import { saveRecord } from '../records.js';
 import { onSiteVisits } from '../visits.js';
 import { mountSignaturePad } from '../signature.js';
 import { postLabel } from '../config.js';
+import { signOut } from '../session.js';
 import { esc, icon, screen, toast, formatTime, formatDuration } from '../ui.js';
 
 export async function shiftSummary(ctx) {
@@ -107,6 +108,7 @@ export default async function shift(root, ctx) {
   `);
   if (next === 'signout') {
     await setMeta('guard', null);
+    await signOut();
     ctx.guard = null;
     ctx.navigate('gate');
   } else {

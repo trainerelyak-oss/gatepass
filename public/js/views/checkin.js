@@ -186,7 +186,7 @@ async function pastVisitors() {
   return byName;
 }
 
-async function walkIn(root, ctx, temporary = false) {
+async function walkIn(root, ctx, temporary = false, prefill = null) {
   const { config } = ctx;
   const past = await pastVisitors();
   let picker;
@@ -239,6 +239,11 @@ async function walkIn(root, ctx, temporary = false) {
     onMount: r => {
       picker = mountPhotoPicker(r.querySelector('[data-photos]'), { max: 1 });
       r.querySelector('[name=fullname]').focus({ preventScroll: true });
+      if (prefill) {
+        r.querySelector('[name=fullname]').value = prefill.name || '';
+        r.querySelector('[name=pid]').value = prefill.partialId || '';
+        r.querySelector('[name=host]').value = prefill.host || '';
+      }
       const syncEscort = () => {
         const restricted = checkedValues(r, 'zones').some(z => isRestricted(config, z));
         if (restricted) r.querySelector('[name=escort]').checked = true;
@@ -452,7 +457,7 @@ export async function signOutFlow(root, ctx, visit) {
 
 export async function runCheckin(root, ctx, source) {
   if (source.kind === 'signout') return signOutFlow(root, ctx, source.visit);
-  const visitor = source.kind === 'pass' ? await fromPass(root, ctx, source) : await walkIn(root, ctx, source.kind === 'temp');
+  const visitor = source.kind === 'pass' ? await fromPass(root, ctx, source) : await walkIn(root, ctx, source.kind === 'temp', source.prefill);
   if (!visitor) return;
   if (visitor.signout) return signOutFlow(root, ctx, visitor.signout);
 

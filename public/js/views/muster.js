@@ -3,6 +3,7 @@ import { saveRecord, uid } from '../records.js';
 import { onSiteVisits } from '../visits.js';
 import { typeLabel } from '../config.js';
 import { esc, icon, toast, formatTime, formatDuration, timeAgo } from '../ui.js';
+import { takeTestAction } from '../testmode.js';
 
 export default async function muster(root, ctx) {
   const { config } = ctx;
@@ -165,6 +166,7 @@ export default async function muster(root, ctx) {
   });
 
   if (roll) renderActive();
+  else if (takeTestAction('muster')) await start();
   else await renderIdle();
 
   ticker = setInterval(() => {

@@ -22,9 +22,23 @@
       <button class="icon-btn" id="sound-toggle" type="button" aria-label="Alert sound"></button>
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme"></button>
       <button class="btn btn-secondary demo-btn" id="connect-top" type="button">Connect device</button>
-      <button class="btn btn-secondary demo-btn" id="demo-open" type="button">Demo</button>
+      <button class="btn btn-secondary demo-btn admin-only" id="demo-open" type="button">Demo</button>
+      <button class="user-chip" id="user-chip" type="button" title="Sign out"></button>
     </div>
   </header>
+
+  <div class="auth-screen" id="auth-screen" hidden>
+    <form class="auth-card stack" id="auth-form">
+      <span class="brand-mark auth-mark" data-icon="shield"></span>
+      <h1 id="auth-title">Control room sign in</h1>
+      <p class="muted small" id="auth-sub">Supervisors and admins only.</p>
+      <label class="field" data-setup hidden><span>Your name</span><input name="fullname" autocomplete="name"></label>
+      <label class="field"><span>Username</span><input name="username" required autocomplete="username" autocapitalize="none"></label>
+      <label class="field"><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>
+      <p class="auth-error" id="auth-error" hidden></p>
+      <button class="btn btn-primary btn-block btn-large" type="submit" id="auth-submit">Sign in</button>
+    </form>
+  </div>
 
   <main class="dash">
     <section class="kpis" id="kpis"></section>
@@ -34,7 +48,56 @@
       <button data-view="incidents">Incidents <span data-count="incidents"></span></button>
       <button data-view="reviews">Temporary passes <span data-count="reviews"></span></button>
       <button data-view="checks">Checks &amp; shift reports</button>
+      <button data-view="admin" class="admin-only">Admin</button>
     </nav>
+
+    <section class="dash-view" data-view="admin" hidden>
+      <div class="split">
+        <div class="dash-panel">
+          <div class="dash-panel-head"><h2>Accounts</h2><small class="muted">Officers use the gate app; supervisors and admins can open this control room</small></div>
+          <div class="table-wrap"><table class="onsite-table" id="users-table"></table></div>
+          <form class="stack add-form" id="user-form">
+            <h3>Add an account</h3>
+            <div class="field-row">
+              <label class="field"><span>Full name</span><input name="fullname" required autocomplete="off"></label>
+              <label class="field"><span>Username</span><input name="username" required autocomplete="off" autocapitalize="none"></label>
+            </div>
+            <div class="field-row">
+              <label class="field"><span>Temporary password</span><input name="password" required minlength="6" autocomplete="new-password"></label>
+              <label class="field"><span>Role</span>
+                <select name="role">
+                  <option value="officer">Security officer</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit">Add account</button>
+          </form>
+        </div>
+        <div class="dash-panel">
+          <div class="dash-panel-head"><h2>Watchlist</h2><small class="muted">Phones only receive scrambled fingerprints of these IDs</small></div>
+          <ul class="watch-list" id="watch-list"></ul>
+          <form class="stack add-form" id="watch-form">
+            <h3>Add a person</h3>
+            <div class="field-row">
+              <label class="field"><span>Full name</span><input name="fullname" required autocomplete="off"></label>
+              <label class="field"><span>ID (last 3 digits + letter)</span><input name="pid" required maxlength="4" placeholder="123B" autocomplete="off"></label>
+            </div>
+            <div class="field-row">
+              <label class="field"><span>Action at the gate</span>
+                <select name="level">
+                  <option value="deny">Do not admit</option>
+                  <option value="alert">Admit with escort, alert control room</option>
+                </select>
+              </label>
+              <label class="field"><span>Reason (control room only)</span><input name="reason" autocomplete="off"></label>
+            </div>
+            <button class="btn btn-primary" type="submit">Add to watchlist</button>
+          </form>
+        </div>
+      </div>
+    </section>
 
     <section class="dash-view" data-view="incidents" hidden>
       <div class="split">
@@ -183,7 +246,14 @@
       <p class="muted small">For rehearsals. Reset wipes all records, passes and reviews on the server; gate devices clear their copies on their next sync.</p>
       <button class="btn btn-danger btn-block" id="demo-reset" type="button">Reset demo</button>
       <button class="btn btn-primary btn-block" id="demo-seed" type="button">Load demo data</button>
-      <p class="muted small">Demo data: passes for Priya Nair (ID 101D) and John Lim (contractor, 567A), an interview later today, and two people already on site: Mei Ling Goh and Ahmad Bin Ismail.</p>
+      <button class="btn btn-secondary btn-block" id="demo-fake" type="button">Add 5 fake visitors (tagged TEST)</button>
+      <p class="muted small">Demo data: passes for Priya Nair (ID 101D) and John Lim (contractor, 567A), an interview later today, two people already on site, and demo accounts if they don't exist yet:</p>
+      <table class="roles-table small">
+        <tr><td><code>officer</code> / <code>officer123</code></td><td>Security officer (Daniel Tan)</td></tr>
+        <tr><td><code>officer2</code> / <code>officer123</code></td><td>Security officer (Siti Rahman)</td></tr>
+        <tr><td><code>supervisor</code> / <code>super123</code></td><td>Supervisor (Kumar S.)</td></tr>
+      </table>
+      <p class="muted small">Reset keeps accounts and the watchlist. Change these passwords before real use.</p>
     </div>
   </dialog>
 </body>

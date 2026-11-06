@@ -30,6 +30,77 @@ const ALERT_ICONS = {
 };
 
 let view = 'overview';
+let token = null;
+let me = null;
+let pollTimer = null;
+
+try {
+  token = localStorage.getItem('gp-dash-token');
+} catch {}
+
+function storeToken(value) {
+  token = value;
+  try {
+    value ? localStorage.setItem('gp-dash-token', value) : localStorage.removeItem('gp-dash-token');
+  } catch {}
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    cache: 'no-store',
+    ...options,
+    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) }
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    showAuth('login', 'Your session ended. Sign in again.');
+    throw Object.assign(new Error(body.error || 'Please sign in'), { auth: true });
+  }
+  if (res.status === 403 && path === '/api/state') {
+    storeToken(null);
+    showAuth('login', 'That account is a security officer account. The control room needs a supervisor or admin.');
+    throw Object.assign(new Error(body.error), { auth: true });
+  }
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
+}
+
+function showAuth(mode, message) {
+  clearInterval(pollTimer);
+  pollTimer = null;
+  const screen = document.getElementById('auth-screen');
+  screen.hidden = false;
+  screen.dataset.mode = mode;
+  document.getElementById('auth-title').textContent = mode === 'setup' ? 'Set up GatePass' : 'Control room sign in';
+  document.getElementById('auth-sub').textContent = mode === 'setup'
+    ? 'Create the first admin account. You can add officers and supervisors after this.'
+    : 'Supervisors and admins only.';
+  document.querySelector('#auth-form [data-setup]').hidden = mode !== 'setup';
+  document.getElementById('auth-submit').textContent = mode === 'setup' ? 'Create admin account' : 'Sign in';
+  const error = document.getElementById('auth-error');
+  error.hidden = !message;
+  error.textContent = message || '';
+  document.querySelector('#auth-form [name=username]').focus();
+}
+
+function hideAuth() {
+  document.getElementById('auth-screen').hidden = true;
+}
+
+function startPolling() {
+  hideAuth();
+  poll();
+  clearInterval(pollTimer);
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+function applyRole() {
+  const admin = me?.role === 'admin';
+  document.body.classList.toggle('is-admin', admin);
+  const chip = document.getElementById('user-chip');
+  chip.textContent = me ? `${me.name} · ${me.roleLabel}` : '';
+  if (!admin && view === 'admin') document.querySelector('#dash-tabs [data-view="overview"]').click();
+}
 let feedExpanded = false;
 let onsiteQuery = '';
 let knownHigh = null;
@@ -128,7 +199,7 @@ function renderFeed() {
             <button class="record-row">
               <span class="record-icon">${icon(d.icon)}</span>
               <span class="record-body">
-                <strong>${esc(d.title)}</strong>
+                <strong>${esc(d.title)}${record.test ? ' <span class="tag tag-test">TEST</span>' : ''}</strong>
                 <small>${esc(d.subtitle)}</small>
                 <span class="record-meta">Gate ${esc(record.gate || '?')} · ${esc(record.guardName || '')} · ${formatDateTime(record.createdAt)}</span>
               </span>
@@ -366,10 +437,11 @@ function renderAll() {
 }
 
 async function poll() {
+  if (!token) return;
   try {
-    const res = await fetch('/api/state', { cache: 'no-store' });
-    if (!res.ok) throw new Error(res.status);
-    state = await res.json();
+    state = await api('/api/state');
+    me = state.me;
+    applyRole();
     fresh.clear();
     const ids = [...state.feed.map(r => r.id), ...state.alerts.map(a => a.id), ...state.visits.map(v => v.visitId), ...state.incidents.map(i => i.id)];
     for (const id of ids) {
@@ -381,10 +453,49 @@ async function poll() {
     firstLoad = false;
     connected = true;
     lastFetch = new Date();
-  } catch {
+  } catch (err) {
+    if (err.auth) return;
     connected = false;
   }
   renderAll();
+}
+
+let adminData = null;
+
+async function loadAdmin() {
+  const [users, watch] = await Promise.all([api('/api/users'), api('/api/watchlist')]);
+  adminData = { users: users.users, watch: watch.entries };
+  renderAdmin();
+}
+
+function renderAdmin() {
+  if (!adminData) return;
+  document.getElementById('users-table').innerHTML = `
+    <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      ${adminData.users.map(u => `
+        <tr class="${u.active ? '' : 'is-muted'}">
+          <td><strong>${esc(u.name)}</strong>${u.lastLoginAt ? `<small>Last sign-in ${formatDateTime(u.lastLoginAt)}</small>` : '<small>Never signed in</small>'}</td>
+          <td class="mono">${esc(u.username)}</td>
+          <td>
+            <select data-role="${esc(u.id)}" ${u.id === me?.id ? 'disabled' : ''}>
+              ${['officer', 'supervisor', 'admin'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${{ officer: 'Security officer', supervisor: 'Supervisor', admin: 'Admin' }[r]}</option>`).join('')}
+            </select>
+          </td>
+          <td>${u.active ? '<span class="tag">Active</span>' : '<span class="tag tag-id_mismatch">Disabled</span>'}</td>
+          <td class="row-actions">
+            <button class="btn btn-secondary btn-sm" data-reset-pw="${esc(u.id)}">Reset password</button>
+            ${u.id === me?.id ? '' : `<button class="btn btn-ghost btn-sm" data-toggle-user="${esc(u.id)}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>`}
+          </td>
+        </tr>`).join('')}
+    </tbody>`;
+  document.getElementById('watch-list').innerHTML = adminData.watch.length
+    ? adminData.watch.map(w => `
+        <li>
+          <span class="watch-main"><strong>${esc(w.name)}</strong><small>ID •••${esc(w.partialId)} · ${w.level === 'deny' ? 'Do not admit' : 'Escort + alert'}${w.reason ? ` · ${esc(w.reason)}` : ''}</small></span>
+          <button class="btn btn-ghost btn-sm" data-unwatch="${esc(w.id)}">Remove</button>
+        </li>`).join('')
+    : '<li class="empty">Nobody on the watchlist.</li>';
 }
 
 function tamper(token) {
@@ -474,9 +585,8 @@ function setupInviteForm() {
     const button = form.querySelector('[type=submit]');
     button.disabled = true;
     try {
-      const res = await fetch('/api/invites', {
+      const body = await api('/api/invites', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.visitor.value,
           type: form.type.value,
@@ -490,8 +600,6 @@ function setupInviteForm() {
           zones: [...form.querySelectorAll('[name=invite-zone]:checked')].map(i => i.value)
         })
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Could not create pass');
       form.visitor.value = '';
       form.pid.value = '';
       form.company.value = '';
@@ -560,7 +668,7 @@ async function boot() {
   demo.querySelector('[data-close]').addEventListener('click', () => demo.close());
   document.getElementById('demo-reset').addEventListener('click', async () => {
     if (!confirm('Reset all demo data on the server?')) return;
-    await fetch('/api/demo/reset', { method: 'POST' });
+    await api('/api/demo/reset', { method: 'POST', body: '{}' });
     knownHigh = null;
     seen.clear();
     selectedIncident = null;
@@ -568,7 +676,17 @@ async function boot() {
     demo.close();
   });
   document.getElementById('demo-seed').addEventListener('click', async () => {
-    await fetch('/api/demo/seed', { method: 'POST' });
+    try {
+      const result = await api('/api/demo/seed', { method: 'POST', body: '{}' });
+      if (result.accounts?.length) alert(`Demo accounts created:\n${result.accounts.map(a => `${a.username} / ${a.password} (${a.role})`).join('\n')}`);
+    } catch (err) {
+      alert(err.message);
+    }
+    await poll();
+    demo.close();
+  });
+  document.getElementById('demo-fake').addEventListener('click', async () => {
+    await api('/api/demo/fake-visitors', { method: 'POST', body: JSON.stringify({ count: 5 }) });
     await poll();
     demo.close();
   });
@@ -580,6 +698,7 @@ async function boot() {
     document.querySelectorAll('#dash-tabs [data-view]').forEach(b => b.classList.toggle('active', b === tab));
     document.querySelectorAll('.dash-view').forEach(el => { el.hidden = el.dataset.view !== view; });
     lastIncidentRender = null;
+    if (view === 'admin') loadAdmin().catch(err => alert(err.message));
     renderAll();
   });
 
@@ -595,12 +714,14 @@ async function boot() {
     event.preventDefault();
     const form = event.target;
     if (!selectedIncident) return;
-    const res = await fetch(`/api/incidents/${encodeURIComponent(selectedIncident)}/notes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: form.text.value, status: form.status.value || null, by: 'Control room' })
-    });
-    if (!res.ok) return alert((await res.json()).error || 'Could not save');
+    try {
+      await api(`/api/incidents/${encodeURIComponent(selectedIncident)}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ text: form.text.value, status: form.status.value || null })
+      });
+    } catch (err) {
+      return alert(err.message);
+    }
     form.reset();
     lastIncidentRender = null;
     await poll();
@@ -611,11 +732,10 @@ async function boot() {
     if (!button) return;
     if (button.dataset.review === 'revoked' && !confirm('Revoke this temporary pass? Gates will refuse it after their next sync.')) return;
     button.disabled = true;
-    await fetch('/api/reviews', {
+    await api('/api/reviews', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ passId: button.dataset.pass, decision: button.dataset.review, by: 'Control room' })
-    });
+      body: JSON.stringify({ passId: button.dataset.pass, decision: button.dataset.review })
+    }).catch(err => alert(err.message));
     await poll();
   });
 
@@ -648,9 +768,97 @@ async function boot() {
   const dialog = document.getElementById('pass-dialog');
   dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
 
-  await poll();
-  setInterval(poll, POLL_MS);
+  document.getElementById('auth-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const setup = document.getElementById('auth-screen').dataset.mode === 'setup';
+    const error = document.getElementById('auth-error');
+    error.hidden = true;
+    try {
+      const res = await fetch(setup ? '/api/auth/setup' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.fullname.value, username: form.username.value, password: form.password.value })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Sign in failed');
+      if (body.user.role === 'officer') throw new Error('That is a security officer account. Officers use the gate app; the control room needs a supervisor or admin.');
+      storeToken(body.token);
+      form.reset();
+      startPolling();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  });
+
+  document.getElementById('user-chip').addEventListener('click', () => {
+    if (!confirm('Sign out of the control room?')) return;
+    storeToken(null);
+    me = null;
+    showAuth('login');
+  });
+
+  document.getElementById('user-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      await api('/api/users', { method: 'POST', body: JSON.stringify({ name: form.fullname.value, username: form.username.value, password: form.password.value, role: form.role.value }) });
+      form.reset();
+      await loadAdmin();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  document.getElementById('watch-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    try {
+      await api('/api/watchlist', { method: 'POST', body: JSON.stringify({ name: form.fullname.value, partialId: form.pid.value, level: form.level.value, reason: form.reason.value }) });
+      form.reset();
+      await loadAdmin();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  const adminView = document.querySelector('.dash-view[data-view="admin"]');
+  adminView.addEventListener('change', async event => {
+    const select = event.target.closest('[data-role]');
+    if (!select) return;
+    try {
+      await api(`/api/users/${select.dataset.role}`, { method: 'PATCH', body: JSON.stringify({ role: select.value }) });
+    } catch (err) {
+      alert(err.message);
+    }
+    await loadAdmin();
+  });
+  adminView.addEventListener('click', async event => {
+    const reset = event.target.closest('[data-reset-pw]');
+    const toggle = event.target.closest('[data-toggle-user]');
+    const unwatch = event.target.closest('[data-unwatch]');
+    try {
+      if (reset) {
+        const password = prompt('New temporary password (at least 6 characters). They will be signed out everywhere.');
+        if (!password) return;
+        await api(`/api/users/${reset.dataset.resetPw}`, { method: 'PATCH', body: JSON.stringify({ password }) });
+        alert('Password changed.');
+      }
+      if (toggle) await api(`/api/users/${toggle.dataset.toggleUser}`, { method: 'PATCH', body: JSON.stringify({ active: toggle.dataset.active !== 'true' }) });
+      if (unwatch && confirm('Remove this person from the watchlist?')) await api(`/api/watchlist/${unwatch.dataset.unwatch}`, { method: 'DELETE' });
+    } catch (err) {
+      alert(err.message);
+    }
+    if (reset || toggle || unwatch) await loadAdmin();
+  });
+
+  const status = await (await fetch('/api/auth/status', { cache: 'no-store' })).json().catch(() => ({}));
+  if (status.needsSetup) showAuth('setup');
+  else if (!token) showAuth('login');
+  else startPolling();
 }
+
 
 if (document.readyState === 'complete') boot();
 else window.addEventListener('load', boot);

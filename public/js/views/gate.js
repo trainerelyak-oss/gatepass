@@ -5,6 +5,7 @@ import { cameraAvailable, startScanner, warnNoCamera } from '../scanner.js';
 import { postLabel, typeLabel } from '../config.js';
 import { esc, icon, toast, formatTime, timeAgo } from '../ui.js';
 import { runCheckin } from './checkin.js';
+import { takeTestAction } from '../testmode.js';
 
 export default async function gate(root, ctx) {
   const { config } = ctx;
@@ -197,6 +198,10 @@ export default async function gate(root, ctx) {
   });
 
   await render();
+
+  const test = takeTestAction('gate');
+  if (test?.action === 'pass') startFlow({ kind: 'pass', token: test.token, method: 'test' });
+  if (test?.action === 'walkin') startFlow({ kind: 'walkin', prefill: test.prefill });
 
   const unsubscribe = subscribe(state => {
     if (!inFlow && !sheetOpen() && state.cacheUpdatedAt && state.cacheUpdatedAt !== lastCache) render();

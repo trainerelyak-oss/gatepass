@@ -38,6 +38,21 @@ GatePass keeps every gate working with no connection, and syncs when the connect
 
 **Demo tools.** The dashboard's **Demo** button resets the server and loads a ready-made scenario (two passes, two people already on site). Gate devices clear their copies automatically on their next sync. Each pass dialog also has **Copy tampered pass** for showing forgery detection.
 
+**Accounts and permissions.** Everyone signs in. Three levels:
+
+| | Security officer | Supervisor | Admin |
+|---|---|---|---|
+| Gate app: scan, walk-in, temporary pass, spot check, incidents, checks, roll call | ✓ | ✓ | ✓ |
+| Control room dashboard | | ✓ | ✓ |
+| Create visitor passes, approve or revoke temporary passes, follow up incidents | | ✓ | ✓ |
+| Add accounts, change roles, reset passwords, disable people | | | ✓ |
+| Add or remove watchlist IDs | | | ✓ |
+| Demo tools | | | ✓ |
+
+Passwords are stored with scrypt and sessions are signed tokens. An officer who has signed in on a phone before can sign in on it again offline. Disabling an account or resetting its password signs that person out everywhere at the next sync.
+
+**Test mode.** Profile → Test mode adds a floating TEST button: switch between online and offline, and act out scenarios (valid pass, forged pass, walk-in, banned person, escort-only person, tailgater, fill the site with fake visitors, fire drill). Records made in test mode are tagged TEST in the control room. Profile → Demo & test guide lists every feature with what to do and what to expect, with tick boxes.
+
 ## Running it
 
 Needs Node 18+. Nothing to install.
@@ -66,8 +81,9 @@ Every gate phone and the dashboard talk to the same server, so they all need to 
 2. **Create the tables.** In the project: **SQL Editor** → **New query** → paste the contents of `supabase/schema.sql` from this repo → **Run**. You should see "Success".
 3. **Copy two values.** **Project Settings → API Keys** (or Data API): copy the **Project URL** (`https://xxxx.supabase.co`) and a **secret key** (`sb_secret_...`). Never put the secret key in the browser or in GitHub.
 4. **Deploy the app.** Sign up at render.com with GitHub → **New → Blueprint** → pick this repository. Render reads `render.yaml` and asks for `SUPABASE_URL` and `SUPABASE_SECRET_KEY`: paste the two values → **Apply**.
-5. **Check the logs.** When the deploy finishes, the log shows `GatePass running · Supabase database`. If something is wrong it says exactly what (tables missing, wrong key or wrong URL).
-6. **Use it.** Open `https://<your-service>.onrender.com/dashboard` → **Connect device** → scan the QR code with each phone.
+5. **Optional:** add `ADMIN_USERNAME` and `ADMIN_PASSWORD` variables to create the admin account automatically. Otherwise the first person to open `/dashboard` sets it up, so do that straight away.
+6. **Check the logs.** When the deploy finishes, the log shows `GatePass running · Supabase database`. If something is wrong it says exactly what (tables missing, wrong key or wrong URL).
+7. **Use it.** Open `https://<your-service>.onrender.com/dashboard` → **Connect device** → scan the QR code with each phone.
 
 Free-plan behaviour to know about: Render puts the app to sleep after 15 minutes with no traffic and takes about a minute to wake up (gate phones keep working offline meanwhile and sync once it's awake). Supabase pauses a free project after a week with no activity; resume it from the Supabase dashboard. Before a demo, open the dashboard a couple of minutes early to wake everything up.
 
@@ -77,8 +93,9 @@ Phones that lose signal keep working and catch up when they reconnect. The dashb
 
 ## Demo walkthrough
 
+0. **First run:** open `/dashboard`. It asks you to create the admin account. Then **Demo → Load demo data** creates passes, people on site and demo accounts (`officer` / `officer123`, `officer2` / `officer123`, `supervisor` / `super123`). Change these passwords before real use.
 1. Open the **dashboard** and create a pass (try a Contractor with ID `567A`, zones Loading bay + Plant room). Open the pass page on a phone or another window.
-2. Open the **gate app** and sign in as Gate A. Wait for "Site data downloaded" at the bottom: the device now has the site key, the passes, the watchlist and the other devices' keys.
+2. Open the **gate app** and sign in as `officer` at Gate A. Wait for "Site data downloaded" at the bottom: the device now has the site key, the passes, the watchlist and the other devices' keys.
 3. Go offline: DevTools → Network → **Offline**, or profile icon → *Test mode: force offline*.
 4. **Scan pass** (camera or the 6-letter code). Enter the ID, complete the induction with a permit number, issue an access card, and get a badge.
 5. **Temporary** → issue a 2-hour pass for a walk-in. A QR appears that other gates can verify offline.
@@ -119,6 +136,7 @@ Gates, zones, visitor types, induction rules, item presets, temporary access lim
 ```
 server/server.js        HTTP server and API
 server/store.js         storage: SQLite, Supabase or JSON file
+server/auth.js          passwords, sign-in tokens, roles
 supabase/schema.sql     tables for the free Supabase setup
 server/passes.js        signing keys, pass tokens, watchlist hashing
 server/visits.js        turns events into visits and alerts

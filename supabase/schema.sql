@@ -3,6 +3,8 @@ create table if not exists gp_invites     (id text primary key, data jsonb not n
 create table if not exists gp_devices     (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
 create table if not exists gp_device_keys (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
 create table if not exists gp_reviews     (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
+create table if not exists gp_users       (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
+create table if not exists gp_watchlist   (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
 create table if not exists gp_meta        (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
 create table if not exists gp_photos      (id text primary key, content_type text not null, data text not null, updated_at timestamptz not null default now());
 
@@ -13,6 +15,8 @@ alter table gp_invites     enable row level security;
 alter table gp_devices     enable row level security;
 alter table gp_device_keys enable row level security;
 alter table gp_reviews     enable row level security;
+alter table gp_users       enable row level security;
+alter table gp_watchlist   enable row level security;
 alter table gp_meta        enable row level security;
 alter table gp_photos      enable row level security;
 

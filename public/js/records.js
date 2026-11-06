@@ -40,6 +40,7 @@ export async function saveRecord(type, fields) {
     deviceId: await getMeta('deviceId'),
     recordedOffline: !isConnected(),
     location: lastPosition,
+    ...((await getMeta('testMode')) ? { test: true } : {}),
     ...fields,
     syncStatus: 'pending'
   };

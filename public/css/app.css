@@ -1408,3 +1408,74 @@ details.why.panel .facts { margin: 0 14px 14px; }
 .tabbar a { font-size: 12px; }
 .view { gap: 14px; }
 .panel .switch-row { margin-bottom: 14px; }
+
+.testbar { position: fixed; right: 14px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 14px); z-index: 40; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.testbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border: 2px solid #8b5cf6;
+  border-radius: 999px;
+  background: #2a1d4a;
+  color: #e9e0ff;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.testbar-toggle .icon { width: 16px; height: 16px; }
+.testbar-toggle.is-offline { border-color: var(--accent); }
+.testbar-panel {
+  width: min(340px, calc(100vw - 28px));
+  max-height: 70vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 2px solid #8b5cf6;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 40%);
+}
+.testbar-head { display: flex; justify-content: space-between; align-items: center; }
+.testbar-actions { display: flex; flex-direction: column; gap: 6px; }
+.testbar-action {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--subtle);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.testbar-action:active { transform: scale(0.99); }
+body.testing .toasts { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 64px); }
+
+.center { text-align: center; }
+.role-chip { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; background: var(--info-bg); color: var(--info); align-self: flex-start; }
+.role-admin { background: rgb(139 92 246 / 18%); color: #b69cff; }
+.role-supervisor { background: var(--warn-bg); color: var(--warn); }
+
+.explain-body { display: flex; flex-direction: column; gap: 10px; padding: 0 14px 4px; font-size: 14px; }
+.roles-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.roles-table th, .roles-table td { padding: 6px 4px; border-top: 1px solid var(--line); text-align: center; }
+.roles-table td:first-child, .roles-table th:first-child { text-align: left; }
+.guide-progress { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.guide-progress > div { flex: 1; }
+.guide-progress .progress { margin: 8px 0 0; }
+.btn-sm { min-height: 36px; padding: 0 12px; font-size: 13px; }
+.test-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.test-item { display: flex; gap: 12px; padding: 14px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--line); }
+.test-item.is-done { border-color: var(--ok); background: var(--ok-bg); }
+.test-check input { width: 22px; height: 22px; margin: 2px 0 0; accent-color: var(--ok); }
+.test-body { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.test-body .link-button { align-self: flex-start; padding: 4px 0; display: inline-flex; gap: 6px; align-items: center; }
+.test-body .link-button .icon { width: 16px; height: 16px; }
+.test-label { display: inline-block; min-width: 50px; margin-right: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.testbar { flex-direction: column-reverse; }

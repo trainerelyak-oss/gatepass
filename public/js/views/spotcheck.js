@@ -5,6 +5,7 @@ import { allVisits, findVisitByBadge } from '../visits.js';
 import { cameraAvailable, startScanner, warnNoCamera } from '../scanner.js';
 import { zoneName, zoneList, typeLabel } from '../config.js';
 import { esc, icon, screen, toast, formatTime } from '../ui.js';
+import { takeTestAction } from '../testmode.js';
 
 const VERDICTS = {
   ok: { tone: 'good', icon: 'check', title: 'Authorised here' },
@@ -167,7 +168,13 @@ export default async function spotcheck(root, ctx) {
     }
   }
 
+  const test = takeTestAction('spot');
+  if (test) {
+    zone = test.zone || zone;
+    await setMeta('spotZone', zone);
+  }
   await render();
+  if (test?.token) run({ token: test.token });
 
   return () => {
     active = false;
