@@ -12,7 +12,17 @@ const ICONS = {
   check: '<path d="M20 6 9 17l-5-5"/>',
   cloudOff: '<path d="m2 2 20 20"/><path d="M5.8 7.6A6 6 0 0 0 7 19h10.5"/><path d="M21.5 16.5A4.5 4.5 0 0 0 17.5 10h-.7A7 7 0 0 0 9.8 5.2"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>',
+  siren: '<path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 21h14v-3H5z"/><path d="M12 3V2M4.2 6.2l-.7-.7M19.8 6.2l.7-.7M2 12h1M21 12h1"/>',
+  logIn: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
+  logOut: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  userPlus: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M19 8v6M16 11h6"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  hardhat: '<path d="M2 18h20"/><path d="M4 18v-3a8 8 0 0 1 16 0v3"/><path d="M10 7V5h4v2"/>'
 };
 
 export function icon(name, className = 'icon') {
@@ -77,36 +87,33 @@ export function syncDelay(record) {
 
 export function describeRecord(record) {
   switch (record.type) {
-    case 'scan':
+    case 'checkin':
       return {
-        icon: 'pin',
+        icon: 'logIn',
+        tone: record.watchlist || record.idCheck === 'mismatch' ? 'warn' : 'ok',
+        title: `${record.name} signed in`,
+        subtitle: [record.badge, record.visitorType, record.host].filter(Boolean).join(' · ')
+      };
+    case 'checkout':
+      return {
+        icon: 'logOut',
         tone: 'neutral',
-        title: record.checkpointName || record.checkpointId,
-        subtitle: `Checkpoint ${record.checkpointId} · ${record.method === 'qr' ? 'QR scan' : 'Code entry'}`
+        title: `${record.name} signed out`,
+        subtitle: [record.badge, `Gate ${record.gate}`].filter(Boolean).join(' · ')
       };
-    case 'patrol': {
-      const visited = record.visited?.length || 0;
-      const total = record.total || visited;
+    case 'denied':
       return {
-        icon: 'route',
-        tone: visited < total ? 'warn' : 'ok',
-        title: visited < total ? 'Patrol round incomplete' : 'Patrol round completed',
-        subtitle: `${visited}/${total} checkpoints · ${formatDuration(new Date(record.endedAt) - new Date(record.startedAt))}`
+        icon: 'ban',
+        tone: 'danger',
+        title: `Entry refused${record.name ? `: ${record.name}` : ''}`,
+        subtitle: record.reason
       };
-    }
-    case 'inspection':
+    case 'muster':
       return {
-        icon: 'clipboard',
-        tone: record.failedCount ? 'warn' : 'ok',
-        title: `${record.checklistName} inspection`,
-        subtitle: `${record.area || 'No area'} · ${record.failedCount ? `${record.failedCount} item${record.failedCount > 1 ? 's' : ''} failed` : 'All items passed'}`
-      };
-    case 'incident':
-      return {
-        icon: 'alert',
-        tone: record.severity === 'critical' || record.severity === 'high' ? 'danger' : 'warn',
-        title: record.title,
-        subtitle: `${record.category} · ${record.severity}`
+        icon: 'siren',
+        tone: record.missing?.length ? 'danger' : 'ok',
+        title: 'Evacuation roll call',
+        subtitle: `${record.accounted?.length || 0}/${record.total} accounted${record.missing?.length ? ` · ${record.missing.length} missing` : ''}`
       };
     default:
       return { icon: 'list', tone: 'neutral', title: record.type, subtitle: '' };
@@ -115,26 +122,44 @@ export function describeRecord(record) {
 
 export function recordDetails(record) {
   const rows = [];
-  if (record.type === 'inspection') {
-    rows.push(`<ul class="result-list">${record.results
-      .map(r => `<li class="result-${r.result}"><span class="result-tag">${esc(r.result)}</span><span>${esc(r.item)}${r.note ? `<em>${esc(r.note)}</em>` : ''}</span></li>`)
-      .join('')}</ul>`);
+  const line = (label, value) => value ? rows.push(`<p class="detail-line"><strong>${esc(label)}:</strong> ${esc(value)}</p>`) : null;
+
+  if (record.type === 'checkin') {
+    line('Company', record.company);
+    line('Host', record.host);
+    line('ID', record.partialId ? `•••${record.partialId}` : null);
+    line('Entry by', record.method === 'pass' ? `Pass ${record.passId}` : 'Walk-in registration');
+    if (record.idCheck === 'mismatch') rows.push('<p class="detail-line detail-warn">ID did not match the pass. Admitted on override.</p>');
+    if (record.watchlist) rows.push(`<p class="detail-line detail-warn">Watchlist match (${esc(record.watchlist.level)}). Control room notified.</p>`);
+    if (record.induction) rows.push(`<p class="detail-line"><strong>Safety induction:</strong> acknowledged ${record.induction.items.length} rules</p>`);
+    if (record.induction?.signature) rows.push(`<img class="detail-signature" src="${esc(record.induction.signature)}" alt="Signature">`);
   }
-  if (record.type === 'patrol') {
-    rows.push(`<p class="detail-line"><strong>Visited:</strong> ${record.visited.map(v => `${esc(v.name)} (${formatTime(v.at)})`).join(', ') || 'none'}</p>`);
-    if (record.missed?.length) rows.push(`<p class="detail-line detail-warn"><strong>Missed:</strong> ${record.missed.map(m => esc(m.name)).join(', ')}</p>`);
+  if (record.type === 'muster' && record.missing?.length) {
+    rows.push(`<p class="detail-line detail-warn"><strong>Unaccounted:</strong> ${record.missing.map(m => esc(m.name)).join(', ')}</p>`);
   }
-  if (record.type === 'incident') {
-    if (record.area) rows.push(`<p class="detail-line"><strong>Location:</strong> ${esc(record.area)}</p>`);
-    if (record.description) rows.push(`<p class="detail-text">${esc(record.description)}</p>`);
-  }
-  if (record.notes) rows.push(`<p class="detail-text">${esc(record.notes)}</p>`);
   if (record.photos?.length) {
     rows.push(`<div class="detail-photos">${record.photos.map(src => `<a href="${esc(src)}" target="_blank" rel="noopener"><img src="${esc(src)}" alt="" loading="lazy"></a>`).join('')}</div>`);
   }
   const meta = [`Recorded ${formatDateTime(record.createdAt)}`];
+  if (record.gate) meta.push(`Gate ${esc(record.gate)}`);
   if (record.guardName) meta.push(`by ${esc(record.guardName)}`);
-  if (record.location) meta.push(`GPS ${record.location.lat}, ${record.location.lng} (±${record.location.accuracy}m)`);
   rows.push(`<p class="detail-meta">${meta.join(' · ')}</p>`);
   return rows.join('');
+}
+
+export function screen(root, html, { validate, onMount } = {}) {
+  root.innerHTML = html;
+  window.scrollTo(0, 0);
+  onMount?.(root);
+  return new Promise(resolve => {
+    const handler = async event => {
+      const button = event.target.closest('[data-step]');
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      if (validate && !(await validate(button.dataset.step, root))) return;
+      root.removeEventListener('click', handler);
+      resolve(button.dataset.step);
+    };
+    root.addEventListener('click', handler);
+  });
 }

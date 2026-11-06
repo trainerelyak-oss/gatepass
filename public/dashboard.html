@@ -3,17 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PatrolSync · Control room</title>
+  <title>GatePass · Control room</title>
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/dashboard.css">
+  <script src="/vendor/qrcode.js" defer></script>
   <script type="module" src="/js/dashboard.js"></script>
 </head>
 <body class="dashboard">
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark" data-icon="shield"></span>
-      <span>PatrolSync <span class="brand-sub">Control room</span></span>
+      <span>GatePass <span class="brand-sub">Control room</span></span>
     </div>
     <div class="live" data-tone="checking"><span class="dot"></span><span class="live-label">Connecting…</span></div>
   </header>
@@ -22,25 +23,77 @@
     <section class="kpis" id="kpis"></section>
 
     <div class="dash-grid">
-      <section class="dash-panel feed-panel">
-        <div class="dash-panel-head">
-          <h2>Incoming records</h2>
-          <div class="chips" id="feed-filters"></div>
-        </div>
-        <ul class="record-list" id="feed"></ul>
-      </section>
+      <div class="dash-main">
+        <section class="dash-panel alerts-panel" id="alerts-panel" hidden>
+          <div class="dash-panel-head"><h2>Alerts</h2><small class="muted">Detected when gate devices sync</small></div>
+          <ul class="alerts" id="alerts"></ul>
+        </section>
+
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h2>On site now</h2><small class="muted" id="onsite-note"></small></div>
+          <div class="table-wrap"><table class="onsite-table" id="onsite"></table></div>
+        </section>
+
+        <section class="dash-panel">
+          <div class="dash-panel-head">
+            <h2>Gate activity</h2>
+            <div class="chips" id="feed-filters"></div>
+          </div>
+          <ul class="record-list" id="feed"></ul>
+        </section>
+      </div>
 
       <aside class="dash-side">
         <section class="dash-panel">
-          <div class="dash-panel-head"><h2>Checkpoint coverage</h2><small class="muted" id="site-name"></small></div>
-          <ul class="coverage" id="coverage"></ul>
+          <div class="dash-panel-head"><h2>Invite a visitor</h2></div>
+          <form class="stack invite-form" id="invite-form">
+            <label class="field"><span>Visitor name</span><input name="visitor" required autocomplete="off"></label>
+            <div class="field-row">
+              <label class="field"><span>Type</span><select name="type" id="invite-type"></select></label>
+              <label class="field"><span>ID (last 4) <em>optional</em></span><input name="pid" maxlength="4" placeholder="567A" autocomplete="off"></label>
+            </div>
+            <label class="field"><span>Company <em>optional</em></span><input name="company" autocomplete="off"></label>
+            <label class="field"><span>Host / unit</span><input name="host" required placeholder="e.g. Acme Pte Ltd, #12-03" autocomplete="off"></label>
+            <div class="field-row">
+              <label class="field"><span>From</span><input name="from" type="datetime-local" required></label>
+              <label class="field"><span>Until</span><input name="to" type="datetime-local" required></label>
+            </div>
+            <label class="check-row"><input type="checkbox" name="multi"> Allow multiple entries</label>
+            <button class="btn btn-primary btn-block" type="submit">Create pass</button>
+          </form>
         </section>
+
         <section class="dash-panel">
-          <div class="dash-panel-head"><h2>Officers</h2></div>
-          <ul class="officers" id="officers"></ul>
+          <div class="dash-panel-head"><h2>Gate devices</h2></div>
+          <ul class="devices" id="devices"></ul>
+        </section>
+
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h2>Last roll call</h2></div>
+          <div id="muster"></div>
+        </section>
+
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h2>Passes issued</h2></div>
+          <ul class="invites" id="invites"></ul>
         </section>
       </aside>
     </div>
   </main>
+
+  <dialog class="sheet pass-dialog" id="pass-dialog">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2 id="pass-dialog-title">Visitor pass</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">×</button>
+      </div>
+      <div class="pass-dialog-qr" id="pass-dialog-qr"></div>
+      <p class="pass-dialog-code mono" id="pass-dialog-code"></p>
+      <div class="field-row">
+        <a class="btn btn-primary" id="pass-dialog-open" target="_blank" rel="noopener">Open pass page</a>
+        <button class="btn btn-secondary" id="pass-dialog-copy" type="button">Copy link</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

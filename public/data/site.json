@@ -1,0 +1,21 @@
+{
+  "site": { "id": "HFT", "name": "Harbourfront Tower" },
+  "gates": [
+    { "id": "A", "name": "Gate A · Main lobby" },
+    { "id": "B", "name": "Gate B · Loading bay" },
+    { "id": "C", "name": "Gate C · Carpark" }
+  ],
+  "visitorTypes": [
+    { "id": "visitor", "label": "Visitor" },
+    { "id": "contractor", "label": "Contractor" },
+    { "id": "delivery", "label": "Delivery" },
+    { "id": "interview", "label": "Interview" }
+  ],
+  "induction": [
+    "I have been briefed on the evacuation route and assembly point",
+    "I will wear a safety helmet, vest and safety boots in work areas",
+    "I will not start hot work without a valid permit",
+    "I will sign out at a gate before leaving the site"
+  ],
+  "assemblyPoint": "Open carpark, Lot P1 (opposite Gate C)"
+}

@@ -1,8 +1,11 @@
 const http = require('http');
+const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
 const os = require('os');
 const path = require('path');
+const { loadSigningKey, passCode, issuePass, watchlistHash } = require('./passes');
+const { buildState } = require('./visits');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -27,21 +30,57 @@ const MIME = {
 
 const ROUTES = {
   '/': 'index.html',
-  '/dashboard': 'dashboard.html'
+  '/dashboard': 'dashboard.html',
+  '/pass': 'pass.html'
 };
 
 fs.mkdirSync(PHOTO_DIR, { recursive: true });
 
+const site = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, 'data', 'site.json'), 'utf8'));
+const signingKey = loadSigningKey(DATA_DIR);
 const db = loadDb();
+const watchlist = loadWatchlist();
 let writeChain = Promise.resolve();
 
 function loadDb() {
+  let data = {};
   try {
-    const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return { records: data.records || {} };
-  } catch {
-    return { records: {} };
-  }
+    data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  } catch {}
+  return {
+    records: data.records || {},
+    invites: data.invites || {},
+    devices: data.devices || {},
+    salt: data.salt || crypto.randomBytes(16).toString('hex')
+  };
+}
+
+function loadWatchlist() {
+  let entries = [];
+  try {
+    entries = JSON.parse(fs.readFileSync(path.join(__dirname, 'watchlist.json'), 'utf8'));
+  } catch {}
+  const hashed = entries.map(entry => ({
+    h: watchlistHash(db.salt, entry.name, entry.partialId),
+    level: entry.level === 'deny' ? 'deny' : 'alert',
+    reason: entry.reason || ''
+  }));
+  return {
+    public: { salt: db.salt, entries: hashed.map(({ h, level }) => ({ h, level })) },
+    reasons: Object.fromEntries(hashed.map(e => [e.h.slice(0, 12), e.reason]))
+  };
+}
+
+function touchDevice(info, at) {
+  if (!info || !info.deviceId) return;
+  const existing = db.devices[info.deviceId] || {};
+  db.devices[info.deviceId] = {
+    deviceId: info.deviceId,
+    gate: info.gate || existing.gate || null,
+    guardName: info.guardName || existing.guardName || null,
+    lastSeenAt: at,
+    lastUploadAt: existing.lastUploadAt || null
+  };
 }
 
 function persist() {
@@ -110,8 +149,9 @@ async function handleSync(req, res) {
 
   const incoming = Array.isArray(body.records) ? body.records : [];
   const receivedAt = new Date().toISOString();
+  touchDevice(body.device, receivedAt);
+  if (body.device?.deviceId && incoming.length) db.devices[body.device.deviceId].lastUploadAt = receivedAt;
   const accepted = [];
-  let changed = false;
 
   for (const record of incoming) {
     if (!record || typeof record.id !== 'string' || typeof record.type !== 'string') continue;
@@ -131,11 +171,76 @@ async function handleSync(req, res) {
       updatedAt: receivedAt
     };
     accepted.push(record.id);
-    changed = true;
   }
 
-  if (changed) await persist();
+  await persist();
   sendJson(res, 200, { accepted, serverTime: receivedAt });
+}
+
+function currentState() {
+  return buildState(db, watchlist.reasons);
+}
+
+function handleBootstrap(url, res) {
+  const now = new Date();
+  touchDevice({
+    deviceId: url.searchParams.get('deviceId'),
+    gate: url.searchParams.get('gate'),
+    guardName: url.searchParams.get('guard')
+  }, now.toISOString());
+  const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  const state = currentState();
+  sendJson(res, 200, {
+    serverTime: now.toISOString(),
+    keyId: signingKey.keyId,
+    publicKey: signingKey.publicJwk,
+    watchlist: watchlist.public,
+    invites: state.invites
+      .filter(i => i.validTo > now.toISOString())
+      .map(({ id, name, type, company, host, validFrom, validTo, multiEntry, token }) => ({ id, name, type, company, host, validFrom, validTo, multiEntry, token })),
+    visits: state.visits
+      .filter(v => v.status === 'on_site' || v.checkinAt > dayAgo)
+      .map(({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, checkinAt, checkinGate, status, checkoutAt, checkoutGate }) => ({ visitId, badge, name, visitorType, company, host, passId, passValidTo, multiEntry, checkinAt, checkinGate, status, checkoutAt, checkoutGate }))
+  });
+}
+
+async function handleCreateInvite(req, res) {
+  let body;
+  try {
+    body = JSON.parse((await readBody(req)) || '{}');
+  } catch {
+    return sendJson(res, 400, { error: 'Invalid JSON' });
+  }
+  const name = String(body.name || '').trim().slice(0, 60);
+  const host = String(body.host || '').trim().slice(0, 60);
+  const type = site.visitorTypes.some(t => t.id === body.type) ? body.type : 'visitor';
+  const validFrom = new Date(body.validFrom || Date.now());
+  const validTo = new Date(body.validTo || Date.now() + 8 * 60 * 60 * 1000);
+  const partialId = String(body.partialId || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+
+  if (!name || !host) return sendJson(res, 400, { error: 'Visitor name and host are required' });
+  if (isNaN(validFrom) || isNaN(validTo) || validTo <= validFrom) return sendJson(res, 400, { error: 'Invalid visit window' });
+  if (partialId && !/^\d{3}[A-Z]$/.test(partialId)) return sendJson(res, 400, { error: 'Partial ID must be the last 3 digits and letter, e.g. 567A' });
+
+  let id = passCode();
+  while (db.invites[id]) id = passCode();
+
+  const invite = {
+    id,
+    name,
+    host,
+    type,
+    company: String(body.company || '').trim().slice(0, 60) || null,
+    partialId: partialId || null,
+    validFrom: validFrom.toISOString(),
+    validTo: validTo.toISOString(),
+    multiEntry: Boolean(body.multiEntry),
+    createdAt: new Date().toISOString()
+  };
+  invite.token = issuePass(signingKey, invite, site.site.id);
+  db.invites[id] = invite;
+  await persist();
+  sendJson(res, 201, invite);
 }
 
 function handleRecords(url, res) {
@@ -182,6 +287,15 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/records' && req.method === 'GET') {
       return handleRecords(url, res);
     }
+    if (pathname === '/api/bootstrap' && req.method === 'GET') {
+      return handleBootstrap(url, res);
+    }
+    if (pathname === '/api/state' && req.method === 'GET') {
+      return sendJson(res, 200, { ...currentState(), serverTime: new Date().toISOString() });
+    }
+    if (pathname === '/api/invites' && req.method === 'POST') {
+      return await handleCreateInvite(req, res);
+    }
     if (pathname.startsWith('/api/')) {
       return sendJson(res, 404, { error: 'Unknown endpoint' });
     }
@@ -205,8 +319,8 @@ server.listen(PORT, () => {
     .flat()
     .filter(i => i && i.family === 'IPv4' && !i.internal)
     .map(i => `http://${i.address}:${PORT}`);
-  console.log(`PatrolSync running`);
-  console.log(`  Guard app:  http://localhost:${PORT}`);
-  console.log(`  Dashboard:  http://localhost:${PORT}/dashboard`);
+  console.log(`GatePass running`);
+  console.log(`  Gate app:      http://localhost:${PORT}`);
+  console.log(`  Control room:  http://localhost:${PORT}/dashboard`);
   for (const addr of addresses) console.log(`  On network: ${addr}`);
 });

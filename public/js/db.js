@@ -1,4 +1,4 @@
-const DB_NAME = 'patrolsync';
+const DB_NAME = 'gatepass';
 const DB_VERSION = 1;
 
 let connection;

@@ -1,5 +1,5 @@
-const VERSION = 'v1';
-const CACHE = `patrolsync-${VERSION}`;
+const VERSION = 'v2';
+const CACHE = `gatepass-${VERSION}`;
 
 const SHELL = [
   '/',
@@ -13,18 +13,23 @@ const SHELL = [
   '/js/ui.js',
   '/js/photos.js',
   '/js/scanner.js',
+  '/js/verify.js',
+  '/js/visits.js',
+  '/js/signature.js',
   '/js/views/onboarding.js',
-  '/js/views/patrol.js',
-  '/js/views/inspect.js',
-  '/js/views/incident.js',
+  '/js/views/gate.js',
+  '/js/views/checkin.js',
+  '/js/views/onsite.js',
+  '/js/views/muster.js',
   '/js/views/log.js',
   '/js/views/settings.js',
-  '/data/config.json',
+  '/data/site.json',
+  '/vendor/jsQR.js',
   '/manifest.webmanifest',
   '/icons/icon.svg'
 ];
 
-const BYPASS = ['/api/', '/photos/', '/dashboard'];
+const BYPASS = ['/api/', '/photos/', '/dashboard', '/pass'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -37,7 +42,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k.startsWith('patrolsync-') && k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

@@ -1,49 +1,59 @@
-export function cameraScanSupported() {
-  return 'BarcodeDetector' in window && Boolean(navigator.mediaDevices?.getUserMedia);
+export function cameraAvailable() {
+  return Boolean(navigator.mediaDevices?.getUserMedia);
 }
 
-export function parseCheckpointCode(raw) {
-  const value = String(raw || '').trim();
-  if (!value) return null;
+function nativeDetector() {
+  if (!('BarcodeDetector' in window)) return null;
   try {
-    const url = new URL(value);
-    const cp = url.searchParams.get('cp');
-    if (cp) return cp.toUpperCase();
-  } catch {}
-  const match = value.match(/CP-?(\d+)/i);
-  if (!match) return value.toUpperCase();
-  return `CP-${match[1].padStart(2, '0')}`;
+    return new BarcodeDetector({ formats: ['qr_code'] });
+  } catch {
+    return null;
+  }
 }
 
-export async function startCameraScan(video, onCode) {
-  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+export async function startScanner(video, onCode) {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' } },
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: false
   });
   video.srcObject = stream;
   video.setAttribute('playsinline', '');
+  video.muted = true;
   await video.play();
 
+  const detector = nativeDetector();
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
   let active = true;
-  let lastValue = null;
-  let lastAt = 0;
+  let last = { value: null, at: 0 };
 
-  const scan = async () => {
+  async function read() {
+    if (detector) {
+      const codes = await detector.detect(video);
+      return codes[0]?.rawValue || null;
+    }
+    if (!window.jsQR || !video.videoWidth) return null;
+    const scale = Math.min(1, 800 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    return window.jsQR(image.data, image.width, image.height, { inversionAttempts: 'dontInvert' })?.data || null;
+  }
+
+  async function loop() {
     if (!active) return;
     try {
-      const codes = await detector.detect(video);
-      const value = codes[0]?.rawValue;
+      const value = await read();
       const now = Date.now();
-      if (value && (value !== lastValue || now - lastAt > 3000)) {
-        lastValue = value;
-        lastAt = now;
+      if (value && (value !== last.value || now - last.at > 3000)) {
+        last = { value, at: now };
         onCode(value);
       }
     } catch {}
-    if (active) setTimeout(scan, 200);
-  };
-  scan();
+    if (active) setTimeout(loop, 180);
+  }
+  loop();
 
   return () => {
     active = false;

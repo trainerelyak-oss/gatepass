@@ -28,7 +28,7 @@ export default async function log(root) {
     const pending = records.filter(r => r.syncStatus === 'pending').length;
 
     root.innerHTML = `
-      <h1 class="page-title">Shift log</h1>
+      <h1 class="page-title">Gate log</h1>
       <p class="muted">${records.length} record${records.length === 1 ? '' : 's'} on this device · ${pending ? `${pending} waiting to upload` : 'everything uploaded'}</p>
       <div class="chips">
         ${FILTERS.map(f => `<button class="chip ${f.id === filter ? 'active' : ''}" data-filter="${f.id}">${f.label}</button>`).join('')}

@@ -1,8 +1,8 @@
 {
-  "name": "PatrolSync",
-  "short_name": "PatrolSync",
-  "description": "Patrols, inspections and incident reports that keep working with no signal.",
-  "start_url": "/#patrol",
+  "name": "GatePass",
+  "short_name": "GatePass",
+  "description": "Visitor management for security posts that keeps working with no internet.",
+  "start_url": "/#gate",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

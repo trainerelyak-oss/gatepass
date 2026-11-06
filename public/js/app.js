@@ -3,17 +3,18 @@ import { init as initSync, subscribe, syncNow } from './sync.js';
 import { loadConfig } from './config.js';
 import { uid, startLocationWatch } from './records.js';
 import { icon, timeAgo } from './ui.js';
-import patrolView from './views/patrol.js';
-import inspectView from './views/inspect.js';
-import incidentView from './views/incident.js';
+import { onSiteVisits } from './visits.js';
+import gateView from './views/gate.js';
+import onsiteView from './views/onsite.js';
+import musterView from './views/muster.js';
 import logView from './views/log.js';
 import settingsView from './views/settings.js';
 import onboardingView from './views/onboarding.js';
 
 const routes = {
-  patrol: patrolView,
-  inspect: inspectView,
-  incident: incidentView,
+  gate: gateView,
+  onsite: onsiteView,
+  muster: musterView,
   log: logView,
   settings: settingsView
 };
@@ -51,7 +52,7 @@ async function route() {
   }
 
   document.body.classList.remove('signed-out');
-  const name = routes[location.hash.slice(1)] ? location.hash.slice(1) : 'patrol';
+  const name = routes[location.hash.slice(1)] ? location.hash.slice(1) : 'gate';
   document.querySelectorAll('.tabbar a').forEach(a => {
     a.classList.toggle('active', a.dataset.route === name);
   });
@@ -109,11 +110,24 @@ function renderStatus(state) {
     strip.hidden = true;
   }
 
-  const badge = document.querySelector('.tab-badge');
+  const badge = document.querySelector('[data-badge="log"]');
   badge.hidden = !state.pending;
   badge.textContent = state.pending > 99 ? '99+' : state.pending;
+  updateOnSiteBadge();
 
   pill.title = state.lastSync ? `Last synced ${timeAgo(state.lastSync)}` : 'Not synced yet';
+}
+
+let onSiteTimer = null;
+
+function updateOnSiteBadge() {
+  clearTimeout(onSiteTimer);
+  onSiteTimer = setTimeout(async () => {
+    const count = (await onSiteVisits()).length;
+    const badge = document.querySelector('[data-badge="onsite"]');
+    badge.hidden = !count;
+    badge.textContent = count > 99 ? '99+' : count;
+  }, 150);
 }
 
 async function boot() {
@@ -132,7 +146,10 @@ async function boot() {
   subscribe(renderStatus);
   document.getElementById('status').addEventListener('click', () => syncNow());
   document.querySelector('.sync-strip-action').addEventListener('click', () => syncNow());
-  window.addEventListener('hashchange', route);
+  window.addEventListener('hashchange', () => {
+    route();
+    updateOnSiteBadge();
+  });
 
   await initSync();
   startLocationWatch();

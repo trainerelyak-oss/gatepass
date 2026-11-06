@@ -1,6 +1,5 @@
 import { pendingRecords, countPending, markSynced, getMeta, setMeta } from './db.js';
 
-const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 const MAX_BATCH_BYTES = 3 * 1024 * 1024;
 const MAX_BATCH_RECORDS = 20;
 const POLL_INTERVAL = 15000;
@@ -12,7 +11,8 @@ const state = {
   syncing: false,
   pending: 0,
   lastSync: null,
-  lastError: null
+  lastError: null,
+  cacheUpdatedAt: null
 };
 
 const listeners = new Set();
@@ -38,10 +38,10 @@ export function isConnected() {
 }
 
 function priority(record) {
-  if (record.type === 'incident') return SEVERITY_RANK[record.severity] ?? 2;
-  if (record.type === 'inspection') return record.failedCount > 0 ? 2 : 4;
-  if (record.type === 'patrol') return 4;
-  return 5;
+  if (record.type === 'denied' || record.watchlist) return 0;
+  if (record.type === 'muster') return 1;
+  if (record.type === 'checkin') return 2;
+  return 3;
 }
 
 function payload(record) {
@@ -89,10 +89,37 @@ async function refreshPending() {
   state.pending = await countPending();
 }
 
+async function deviceInfo() {
+  const guard = await getMeta('guard');
+  return { deviceId: await getMeta('deviceId'), gate: guard?.gate || null, guardName: guard?.name || null };
+}
+
+async function pullSiteCache() {
+  const device = await deviceInfo();
+  const params = new URLSearchParams({ deviceId: device.deviceId || '', gate: device.gate || '', guard: device.guardName || '' });
+  const res = await fetch(`/api/bootstrap?${params}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  const data = await res.json();
+  data.fetchedAt = new Date().toISOString();
+  await setMeta('siteCache', data);
+  state.cacheUpdatedAt = data.fetchedAt;
+}
+
 async function run() {
   await refreshPending();
   const reachable = await checkServer();
-  if (!reachable || state.pending === 0) {
+  if (!reachable) {
+    emit();
+    return;
+  }
+  if (state.pending === 0) {
+    try {
+      await pullSiteCache();
+      state.lastSync = new Date().toISOString();
+      await setMeta('lastSync', state.lastSync);
+    } catch (err) {
+      state.lastError = err.message || 'Sync failed';
+    }
     emit();
     return;
   }
@@ -102,7 +129,7 @@ async function run() {
   emit();
 
   try {
-    const deviceId = await getMeta('deviceId');
+    const device = await deviceInfo();
     const queue = (await pendingRecords()).sort(
       (a, b) => priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt)
     );
@@ -112,7 +139,7 @@ async function run() {
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, records: batch.map(payload) })
+        body: JSON.stringify({ device, records: batch.map(payload) })
       });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       const { accepted, serverTime } = await res.json();
@@ -124,6 +151,7 @@ async function run() {
       emit();
     }
 
+    await pullSiteCache();
     state.lastSync = new Date().toISOString();
     await setMeta('lastSync', state.lastSync);
   } catch (err) {
@@ -160,6 +188,7 @@ export async function init() {
   started = true;
   state.simulatedOffline = Boolean(await getMeta('simulatedOffline'));
   state.lastSync = (await getMeta('lastSync')) || null;
+  state.cacheUpdatedAt = (await getMeta('siteCache'))?.fetchedAt || null;
   await refreshPending();
 
   window.addEventListener('online', () => {

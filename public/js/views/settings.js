@@ -1,9 +1,11 @@
 import { getMeta, setMeta, clearRecords, countPending } from '../db.js';
 import { subscribe, setSimulatedOffline, syncNow } from '../sync.js';
 import { esc, icon, timeAgo, toast } from '../ui.js';
+import { gateName } from '../config.js';
 
 export default async function settings(root, ctx) {
   const deviceId = await getMeta('deviceId');
+  const cache = await getMeta('siteCache');
 
   root.innerHTML = `
     <h1 class="page-title">Shift & device</h1>
@@ -13,6 +15,7 @@ export default async function settings(root, ctx) {
       <div>
         <strong>${esc(ctx.guard.name)}</strong>
         <small>${esc(ctx.guard.id)} · on shift since ${new Date(ctx.guard.signedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
+        <small>${esc(gateName(ctx.config, ctx.guard.gate))}</small>
       </div>
     </section>
 
@@ -24,7 +27,17 @@ export default async function settings(root, ctx) {
         <div><dt>Last upload</dt><dd data-fact="last">—</dd></div>
         <div><dt>Device</dt><dd class="mono">${esc(deviceId?.slice(0, 8))}</dd></div>
       </dl>
-      <button class="btn btn-secondary btn-block" data-action="sync">${icon('sync')} Upload now</button>
+      <button class="btn btn-secondary btn-block" data-action="sync">${icon('sync')} Sync now</button>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Offline readiness</h2>
+      <dl class="facts">
+        <div><dt>Site data</dt><dd>${cache ? timeAgo(cache.fetchedAt) : 'Not downloaded'}</dd></div>
+        <div><dt>Signing key</dt><dd class="mono">${esc(cache?.keyId || '—')}</dd></div>
+        <div><dt>Passes stored</dt><dd>${cache?.invites.length ?? 0}</dd></div>
+        <div><dt>Watchlist entries</dt><dd>${cache?.watchlist.entries.length ?? 0} <small class="muted">(fingerprints only)</small></dd></div>
+      </dl>
     </section>
 
     <section class="panel">
@@ -38,7 +51,7 @@ export default async function settings(root, ctx) {
     </section>
 
     <section class="stack">
-      <button class="btn btn-ghost btn-block" data-action="signout">End shift / switch officer</button>
+      <button class="btn btn-ghost btn-block" data-action="signout">End shift / change post</button>
       <button class="btn btn-ghost btn-block danger-text" data-action="wipe">Erase records on this device</button>
     </section>
   `;
@@ -69,15 +82,14 @@ export default async function settings(root, ctx) {
         : 'End your shift on this device?';
       if (!confirm(message)) return;
       await setMeta('guard', null);
-      await setMeta('activeRound', null);
       ctx.guard = null;
-      ctx.navigate('patrol');
+      ctx.navigate('gate');
     } else if (action === 'wipe') {
       const pending = await countPending();
       if (pending && !confirm(`${pending} record${pending > 1 ? 's have' : ' has'} NOT been uploaded and will be lost. Erase anyway?`)) return;
       if (!pending && !confirm('Erase all records stored on this device?')) return;
       await clearRecords();
-      await setMeta('activeRound', null);
+      await setMeta('activeMuster', null);
       await syncNow();
       toast('Device records erased', 'ok');
     }

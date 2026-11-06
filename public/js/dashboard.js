@@ -1,182 +1,213 @@
-import { esc, icon, describeRecord, recordDetails, formatTime, formatDateTime, formatDuration, timeAgo, syncDelay } from './ui.js';
+import { esc, icon, describeRecord, recordDetails, formatTime, formatDateTime, formatDuration, timeAgo } from './ui.js';
+import { qrSvg } from './qr.js';
 
 const POLL_MS = 3000;
-const STALE_CHECKPOINT_MS = 2 * 60 * 60 * 1000;
-const OFFLINE_THRESHOLD_MS = 60 * 1000;
+const DEVICE_STALE_MS = 2 * 60 * 1000;
 
 const FILTERS = [
   { id: 'all', label: 'All' },
-  { id: 'incident', label: 'Incidents' },
-  { id: 'inspection', label: 'Inspections' },
-  { id: 'patrol', label: 'Patrols' },
-  { id: 'scan', label: 'Check-ins' }
+  { id: 'checkin', label: 'Sign-ins' },
+  { id: 'checkout', label: 'Sign-outs' },
+  { id: 'denied', label: 'Refused' },
+  { id: 'muster', label: 'Roll calls' }
 ];
 
-let config = { site: { name: '' }, checkpoints: [] };
-let records = [];
+const ALERT_ICONS = {
+  pass_reused: 'qr',
+  watchlist: 'ban',
+  denied: 'ban',
+  id_mismatch: 'alert',
+  overstay: 'clock'
+};
+
+let config = { site: { name: '' }, gates: [], visitorTypes: [] };
+let state = null;
 let filter = 'all';
-let lastFetch = null;
 let connected = false;
+let lastFetch = null;
+let firstLoad = true;
 const seen = new Set();
 const fresh = new Set();
 const expanded = new Set();
-let firstLoad = true;
 
-function wasDelayed(record) {
-  const delay = syncDelay(record);
-  return record.recordedOffline || (delay !== null && delay > OFFLINE_THRESHOLD_MS);
+const typeLabel = id => config.visitorTypes.find(t => t.id === id)?.label || id;
+
+function delay(record) {
+  return record.receivedAt ? new Date(record.receivedAt) - new Date(record.createdAt) : 0;
+}
+
+function offlineBadge(offline, ms) {
+  return offline
+    ? `<span class="badge badge-offline">${icon('cloudOff')} Offline · synced +${formatDuration(ms)}</span>`
+    : `<span class="badge badge-synced">${icon('check')} Live</span>`;
 }
 
 function renderKpis() {
-  const today = new Date().toDateString();
-  const todays = records.filter(r => new Date(r.createdAt).toDateString() === today);
-  const openIncidents = records.filter(r => r.type === 'incident' && r.status !== 'closed');
-  const critical = openIncidents.filter(r => r.severity === 'critical' || r.severity === 'high').length;
-  const covered = new Set(todays.filter(r => r.type === 'scan').map(r => r.checkpointId)).size;
-  const delayed = records.filter(wasDelayed);
-  const longest = delayed.reduce((max, r) => Math.max(max, syncDelay(r) || 0), 0);
-
+  const s = state.stats;
   const tiles = [
-    { label: 'Records today', value: todays.length, note: `${records.length} total` },
-    { label: 'Open incidents', value: openIncidents.length, note: critical ? `${critical} high / critical` : 'none urgent', tone: critical ? 'danger' : '' },
-    { label: 'Checkpoints covered today', value: `${covered}/${config.checkpoints.length}`, note: covered < config.checkpoints.length ? `${config.checkpoints.length - covered} not visited` : 'full coverage', tone: covered < config.checkpoints.length ? 'warn' : 'ok' },
-    { label: 'Captured offline', value: delayed.length, note: longest ? `longest gap ${formatDuration(longest)}` : 'no offline gaps', tone: delayed.length ? 'info' : '' }
+    { label: 'On site now', value: s.onSite, note: `${s.today} signed in today` },
+    { label: 'Alerts', value: s.alerts, note: s.highAlerts ? `${s.highAlerts} high priority` : 'nothing urgent', tone: s.highAlerts ? 'danger' : s.alerts ? 'warn' : 'ok' },
+    { label: 'Captured offline', value: s.offlineEvents, note: s.longestOfflineMs ? `longest gap ${formatDuration(s.longestOfflineMs)}` : 'no outages yet', tone: s.offlineEvents ? 'info' : '' },
+    { label: 'Passes issued', value: state.invites.length, note: `${state.invites.filter(i => new Date(i.validTo) > Date.now()).length} still valid` }
   ];
-
-  document.getElementById('kpis').innerHTML = tiles
-    .map(t => `
-      <div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}">
-        <span class="kpi-label">${esc(t.label)}</span>
-        <strong class="kpi-value">${esc(t.value)}</strong>
-        <span class="kpi-note">${esc(t.note)}</span>
-      </div>`)
-    .join('');
+  document.getElementById('kpis').innerHTML = tiles.map(t => `
+    <div class="kpi ${t.tone ? `kpi-${t.tone}` : ''}">
+      <span class="kpi-label">${esc(t.label)}</span>
+      <strong class="kpi-value">${esc(t.value)}</strong>
+      <span class="kpi-note">${esc(t.note)}</span>
+    </div>`).join('');
 }
 
-function renderFilters() {
-  document.getElementById('feed-filters').innerHTML = FILTERS
-    .map(f => {
-      const count = f.id === 'all' ? records.length : records.filter(r => r.type === f.id).length;
-      return `<button class="chip ${f.id === filter ? 'active' : ''}" data-filter="${f.id}">${f.label} <span class="chip-count">${count}</span></button>`;
-    })
-    .join('');
+function renderAlerts() {
+  const panel = document.getElementById('alerts-panel');
+  panel.hidden = !state.alerts.length;
+  document.getElementById('alerts').innerHTML = state.alerts.map(a => `
+    <li class="alert alert-${a.severity} ${fresh.has(a.id) ? 'is-fresh' : ''}">
+      <span class="alert-icon">${icon(ALERT_ICONS[a.kind] || 'alert')}</span>
+      <span class="alert-body">
+        <strong>${esc(a.title)}</strong>
+        <small>${esc(a.detail)}</small>
+      </span>
+      <span class="alert-meta">
+        ${formatTime(a.at)}
+        ${a.offline ? `<span class="badge badge-offline">${icon('cloudOff')} found on sync</span>` : ''}
+      </span>
+    </li>`).join('');
+}
+
+function renderOnSite() {
+  const onSite = state.visits.filter(v => v.status === 'on_site');
+  document.getElementById('onsite-note').textContent = `${onSite.length} people`;
+  document.getElementById('onsite').innerHTML = onSite.length
+    ? `
+      <thead><tr><th>Badge</th><th>Name</th><th>Type</th><th>Visiting</th><th>In</th><th></th></tr></thead>
+      <tbody>
+        ${onSite.map(v => `
+          <tr class="${(v.flags || []).length ? 'is-flagged' : ''} ${fresh.has(v.visitId) ? 'is-fresh' : ''}">
+            <td class="mono">${esc(v.badge || '')}</td>
+            <td><strong>${esc(v.name)}</strong>${v.company ? `<small>${esc(v.company)}</small>` : ''}</td>
+            <td>${esc(typeLabel(v.visitorType))}${v.inducted ? ' <span class="tag">inducted</span>' : ''}</td>
+            <td>${esc(v.host || '')}</td>
+            <td>${formatTime(v.checkinAt)}<small>Gate ${esc(v.checkinGate)}</small></td>
+            <td>${(v.flags || []).map(f => `<span class="tag tag-${f}">${esc(f.replace('_', ' '))}</span>`).join(' ')}${v.checkinOffline ? `<span class="tag tag-offline">offline +${formatDuration(v.checkinDelayMs)}</span>` : ''}</td>
+          </tr>`).join('')}
+      </tbody>`
+    : '<tbody><tr><td class="empty">No visitors on site.</td></tr></tbody>';
 }
 
 function renderFeed() {
-  const visible = records.filter(r => filter === 'all' || r.type === filter).slice(0, 200);
-  const feed = document.getElementById('feed');
+  document.getElementById('feed-filters').innerHTML = FILTERS.map(f => {
+    const count = f.id === 'all' ? state.feed.length : state.feed.filter(r => r.type === f.id).length;
+    return `<button class="chip ${f.id === filter ? 'active' : ''}" data-filter="${f.id}">${f.label} <span class="chip-count">${count}</span></button>`;
+  }).join('');
 
-  if (!visible.length) {
-    feed.innerHTML = `<li class="empty">No records yet. They'll appear here as officers' devices sync.</li>`;
+  const visible = state.feed.filter(r => filter === 'all' || r.type === filter);
+  document.getElementById('feed').innerHTML = visible.length
+    ? visible.map(record => {
+        const d = describeRecord(record);
+        return `
+          <li class="record tone-${d.tone} ${fresh.has(record.id) ? 'is-fresh' : ''} ${expanded.has(record.id) ? 'open' : ''}" data-id="${esc(record.id)}">
+            <button class="record-row">
+              <span class="record-icon">${icon(d.icon)}</span>
+              <span class="record-body">
+                <strong>${esc(d.title)}</strong>
+                <small>${esc(d.subtitle)}</small>
+                <span class="record-meta">Gate ${esc(record.gate || '?')} · ${esc(record.guardName || '')} · ${formatDateTime(record.createdAt)}</span>
+              </span>
+              ${offlineBadge(record.recordedOffline, delay(record))}
+            </button>
+            ${expanded.has(record.id) ? `<div class="record-details">${recordDetails(record)}<p class="detail-meta">Received by server ${formatDateTime(record.receivedAt)}</p></div>` : ''}
+          </li>`;
+      }).join('')
+    : '<li class="empty">Nothing yet. Activity appears here as gate devices sync.</li>';
+}
+
+function renderDevices() {
+  const el = document.getElementById('devices');
+  el.innerHTML = state.devices.length
+    ? state.devices.map(d => {
+        const silent = Date.now() - new Date(d.lastSeenAt) > DEVICE_STALE_MS;
+        return `
+          <li class="device ${silent ? 'is-dark' : ''}">
+            <span class="device-dot"></span>
+            <span class="device-body">
+              <strong>${esc(config.gates.find(g => g.id === d.gate)?.name || `Gate ${d.gate || '?'}`)}</strong>
+              <small>${esc(d.guardName || 'Unknown officer')}</small>
+            </span>
+            <span class="device-state">${silent ? `Offline · last seen ${timeAgo(d.lastSeenAt)}` : 'Connected'}</span>
+          </li>`;
+      }).join('')
+    : '<li class="empty">No gate devices have connected yet.</li>';
+}
+
+function renderMuster() {
+  const latest = state.musters[0];
+  const el = document.getElementById('muster');
+  if (!latest) {
+    el.innerHTML = '<p class="muted small">No evacuations recorded.</p>';
     return;
   }
-
-  feed.innerHTML = visible
-    .map(record => {
-      const d = describeRecord(record);
-      const delay = syncDelay(record);
-      const delayed = wasDelayed(record);
-      return `
-        <li class="record tone-${d.tone} ${fresh.has(record.id) ? 'is-fresh' : ''} ${expanded.has(record.id) ? 'open' : ''}" data-id="${esc(record.id)}">
-          <button class="record-row">
-            <span class="record-icon">${icon(d.icon)}</span>
-            <span class="record-body">
-              <strong>${esc(d.title)}</strong>
-              <small>${esc(d.subtitle)}</small>
-              <span class="record-meta">${esc(record.guardName || 'Unknown officer')} · recorded ${formatDateTime(record.createdAt)}</span>
-            </span>
-            ${delayed
-              ? `<span class="badge badge-offline" title="Received ${formatDateTime(record.receivedAt)}">${icon('cloudOff')} Offline · synced +${formatDuration(delay)}</span>`
-              : `<span class="badge badge-synced">${icon('check')} Live</span>`}
-          </button>
-          ${expanded.has(record.id) ? `<div class="record-details">${recordDetails(record)}<p class="detail-meta">Received by server ${formatDateTime(record.receivedAt)}</p></div>` : ''}
-        </li>`;
-    })
-    .join('');
+  el.innerHTML = `
+    <div class="muster-summary ${latest.missing.length ? 'has-missing' : ''}">
+      <strong>${latest.accounted.length}/${latest.total} accounted</strong>
+      <small>${formatDateTime(latest.startedAt)} · Gate ${esc(latest.gate)} · ${esc(latest.guardName || '')}${latest.recordedOffline ? ' · run offline' : ''}</small>
+    </div>
+    ${latest.missing.length ? `<ul class="missing-mini">${latest.missing.map(m => `<li>${esc(m.name)} <small>${esc(m.host || '')}</small></li>`).join('')}</ul>` : ''}
+  `;
 }
 
-function renderCoverage() {
-  document.getElementById('site-name').textContent = config.site.name;
-  const lastScan = {};
-  for (const r of records) {
-    if (r.type !== 'scan') continue;
-    if (!lastScan[r.checkpointId] || r.createdAt > lastScan[r.checkpointId].createdAt) lastScan[r.checkpointId] = r;
-  }
-
-  document.getElementById('coverage').innerHTML = config.checkpoints
-    .map(cp => {
-      const scan = lastScan[cp.id];
-      const age = scan ? Date.now() - new Date(scan.createdAt) : Infinity;
-      const tone = !scan ? 'never' : age > STALE_CHECKPOINT_MS ? 'stale' : 'ok';
-      return `
-        <li class="coverage-item coverage-${tone}">
-          <span class="coverage-dot"></span>
-          <span class="coverage-body">
-            <strong>${esc(cp.name)}</strong>
-            <small>${esc(cp.id)} · ${esc(cp.zone)}</small>
-          </span>
-          <span class="coverage-time">${scan ? `${formatTime(scan.createdAt)}<small>${esc(scan.guardName || '')}</small>` : 'Not visited'}</span>
-        </li>`;
-    })
-    .join('');
-}
-
-function renderOfficers() {
-  const officers = {};
-  for (const r of records) {
-    const key = r.guardId || r.deviceId;
-    if (!key) continue;
-    const o = officers[key] || (officers[key] = { name: r.guardName || key, id: r.guardId, last: r, count: 0 });
-    o.count++;
-    if (r.createdAt > o.last.createdAt) o.last = r;
-  }
-  const list = Object.values(officers).sort((a, b) => b.last.createdAt.localeCompare(a.last.createdAt));
-  document.getElementById('officers').innerHTML = list.length
-    ? list
-        .map(o => {
-          const d = describeRecord(o.last);
-          return `
-            <li class="officer">
-              <span class="profile-avatar small-avatar">${icon('user')}</span>
-              <span class="officer-body">
-                <strong>${esc(o.name)}</strong>
-                <small>${esc(o.id || '')} · ${o.count} records</small>
-                <small>Last: ${esc(d.title)} · ${timeAgo(o.last.createdAt)}</small>
+function renderInvites() {
+  document.getElementById('invites').innerHTML = state.invites.length
+    ? state.invites.slice(0, 12).map(i => {
+        const used = state.visits.filter(v => v.passId === i.id).length;
+        const expired = new Date(i.validTo) < Date.now();
+        return `
+          <li>
+            <button class="invite-row" data-pass="${esc(i.id)}">
+              <span class="mono invite-code">${esc(i.id)}</span>
+              <span class="invite-body">
+                <strong>${esc(i.name)}</strong>
+                <small>${esc(typeLabel(i.type))} · ${esc(i.host)}</small>
               </span>
-            </li>`;
-        })
-        .join('')
-    : '<li class="empty">No officers have synced yet.</li>';
+              <span class="invite-state">${expired ? 'Expired' : used ? `Used ${used}×` : 'Not used'}</span>
+            </button>
+          </li>`;
+      }).join('')
+    : '<li class="empty">No passes yet.</li>';
 }
 
 function renderLive() {
   const el = document.querySelector('.live');
   el.dataset.tone = connected ? 'online' : 'offline';
   el.querySelector('.live-label').textContent = connected
-    ? `Live · updated ${lastFetch ? timeAgo(lastFetch.toISOString()) : ''}`
+    ? `Live · ${lastFetch ? timeAgo(lastFetch.toISOString()) : ''}`
     : 'Server unreachable';
 }
 
 function renderAll() {
-  renderKpis();
-  renderFilters();
-  renderFeed();
-  renderCoverage();
-  renderOfficers();
+  if (state) {
+    renderKpis();
+    renderAlerts();
+    renderOnSite();
+    renderFeed();
+    renderDevices();
+    renderMuster();
+    renderInvites();
+  }
   renderLive();
 }
 
 async function poll() {
   try {
-    const res = await fetch('/api/records?limit=1000', { cache: 'no-store' });
+    const res = await fetch('/api/state', { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    records = data.records;
+    state = await res.json();
     fresh.clear();
-    for (const r of records) {
-      if (!seen.has(r.id)) {
-        seen.add(r.id);
-        if (!firstLoad) fresh.add(r.id);
+    const ids = [...state.feed.map(r => r.id), ...state.alerts.map(a => a.id), ...state.visits.map(v => v.visitId)];
+    for (const id of ids) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        if (!firstLoad) fresh.add(id);
       }
     }
     firstLoad = false;
@@ -188,19 +219,89 @@ async function poll() {
   renderAll();
 }
 
+function passLink(token) {
+  return `${location.origin}/pass#${token}`;
+}
+
+function showPass(invite) {
+  const dialog = document.getElementById('pass-dialog');
+  document.getElementById('pass-dialog-title').textContent = invite.name;
+  document.getElementById('pass-dialog-qr').innerHTML = qrSvg(invite.token);
+  document.getElementById('pass-dialog-code').textContent = invite.id;
+  document.getElementById('pass-dialog-open').href = passLink(invite.token);
+  document.getElementById('pass-dialog-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(passLink(invite.token));
+      document.getElementById('pass-dialog-copy').textContent = 'Copied';
+    } catch {
+      prompt('Copy this link', passLink(invite.token));
+    }
+  };
+  document.getElementById('pass-dialog-copy').textContent = 'Copy link';
+  dialog.showModal();
+}
+
+function toLocalInput(date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date - offset).toISOString().slice(0, 16);
+}
+
+function setupInviteForm() {
+  const form = document.getElementById('invite-form');
+  document.getElementById('invite-type').innerHTML = config.visitorTypes.map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
+  const now = new Date();
+  now.setMinutes(Math.floor(now.getMinutes() / 15) * 15, 0, 0);
+  form.from.value = toLocalInput(now);
+  form.to.value = toLocalInput(new Date(now.getTime() + 4 * 60 * 60 * 1000));
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = form.querySelector('[type=submit]');
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.visitor.value,
+          type: form.type.value,
+          partialId: form.pid.value,
+          company: form.company.value,
+          host: form.host.value,
+          validFrom: new Date(form.from.value).toISOString(),
+          validTo: new Date(form.to.value).toISOString(),
+          multiEntry: form.multi.checked
+        })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not create pass');
+      form.visitor.value = '';
+      form.pid.value = '';
+      form.company.value = '';
+      await poll();
+      showPass(body);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 async function boot() {
   document.querySelectorAll('[data-icon]').forEach(el => {
     el.innerHTML = icon(el.dataset.icon);
   });
   try {
-    config = await (await fetch('/data/config.json', { cache: 'no-store' })).json();
+    config = await (await fetch('/data/site.json', { cache: 'no-store' })).json();
   } catch {}
+
+  setupInviteForm();
 
   document.getElementById('feed-filters').addEventListener('click', event => {
     const chip = event.target.closest('[data-filter]');
     if (!chip) return;
     filter = chip.dataset.filter;
-    renderFilters();
     renderFeed();
   });
 
@@ -209,12 +310,21 @@ async function boot() {
     if (!row) return;
     const id = row.closest('.record').dataset.id;
     expanded.has(id) ? expanded.delete(id) : expanded.add(id);
-    fresh.delete(id);
     renderFeed();
   });
+
+  document.getElementById('invites').addEventListener('click', event => {
+    const row = event.target.closest('[data-pass]');
+    const invite = row && state?.invites.find(i => i.id === row.dataset.pass);
+    if (invite) showPass(invite);
+  });
+
+  const dialog = document.getElementById('pass-dialog');
+  dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
 
   await poll();
   setInterval(poll, POLL_MS);
 }
 
-boot();
+if (document.readyState === 'complete') boot();
+else window.addEventListener('load', boot);
