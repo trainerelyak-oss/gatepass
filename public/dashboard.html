@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PatrolSync · Control room</title>
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/dashboard.css">
+  <script type="module" src="/js/dashboard.js"></script>
+</head>
+<body class="dashboard">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" data-icon="shield"></span>
+      <span>PatrolSync <span class="brand-sub">Control room</span></span>
+    </div>
+    <div class="live" data-tone="checking"><span class="dot"></span><span class="live-label">Connecting…</span></div>
+  </header>
+
+  <main class="dash">
+    <section class="kpis" id="kpis"></section>
+
+    <div class="dash-grid">
+      <section class="dash-panel feed-panel">
+        <div class="dash-panel-head">
+          <h2>Incoming records</h2>
+          <div class="chips" id="feed-filters"></div>
+        </div>
+        <ul class="record-list" id="feed"></ul>
+      </section>
+
+      <aside class="dash-side">
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h2>Checkpoint coverage</h2><small class="muted" id="site-name"></small></div>
+          <ul class="coverage" id="coverage"></ul>
+        </section>
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h2>Officers</h2></div>
+          <ul class="officers" id="officers"></ul>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

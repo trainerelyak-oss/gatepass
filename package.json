@@ -1,0 +1,13 @@
+{
+  "name": "patrolsync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first patrol, inspection and incident logging for security teams",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

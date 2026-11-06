@@ -1,0 +1,142 @@
+import { getMeta, setMeta } from './db.js';
+import { init as initSync, subscribe, syncNow } from './sync.js';
+import { loadConfig } from './config.js';
+import { uid, startLocationWatch } from './records.js';
+import { icon, timeAgo } from './ui.js';
+import patrolView from './views/patrol.js';
+import inspectView from './views/inspect.js';
+import incidentView from './views/incident.js';
+import logView from './views/log.js';
+import settingsView from './views/settings.js';
+import onboardingView from './views/onboarding.js';
+
+const routes = {
+  patrol: patrolView,
+  inspect: inspectView,
+  incident: incidentView,
+  log: logView,
+  settings: settingsView
+};
+
+const ctx = {
+  config: null,
+  guard: null,
+  navigate
+};
+
+let teardown = null;
+let routeToken = 0;
+
+function navigate(name) {
+  if (location.hash === `#${name}`) route();
+  else location.hash = name;
+}
+
+async function route() {
+  const token = ++routeToken;
+  if (teardown) {
+    teardown();
+    teardown = null;
+  }
+
+  const main = document.getElementById('view');
+  main.innerHTML = '';
+  window.scrollTo(0, 0);
+
+  if (!ctx.guard) {
+    document.body.classList.add('signed-out');
+    const cleanup = await onboardingView(main, ctx);
+    if (token === routeToken) teardown = cleanup || null;
+    return;
+  }
+
+  document.body.classList.remove('signed-out');
+  const name = routes[location.hash.slice(1)] ? location.hash.slice(1) : 'patrol';
+  document.querySelectorAll('.tabbar a').forEach(a => {
+    a.classList.toggle('active', a.dataset.route === name);
+  });
+
+  const cleanup = await routes[name](main, ctx);
+  if (token === routeToken) teardown = cleanup || null;
+  else if (cleanup) cleanup();
+}
+
+function renderStatus(state) {
+  const pill = document.getElementById('status');
+  const label = pill.querySelector('.label');
+  let tone = 'online';
+  let text = 'Online';
+
+  if (state.simulatedOffline) {
+    tone = 'offline';
+    text = 'Offline (test)';
+  } else if (!state.online) {
+    tone = 'offline';
+    text = 'Offline';
+  } else if (state.syncing) {
+    tone = 'syncing';
+    text = 'Syncing';
+  } else if (!state.reachable) {
+    tone = 'offline';
+    text = 'No server';
+  }
+
+  pill.dataset.tone = tone;
+  label.textContent = text;
+
+  const strip = document.getElementById('sync-strip');
+  const stripText = strip.querySelector('.sync-strip-text');
+  const stripIcon = strip.querySelector('.sync-strip-icon');
+  const action = strip.querySelector('.sync-strip-action');
+  const offline = tone === 'offline';
+  const count = `${state.pending} record${state.pending === 1 ? '' : 's'}`;
+
+  if (offline) {
+    strip.hidden = false;
+    strip.dataset.tone = 'offline';
+    stripIcon.innerHTML = icon('cloudOff');
+    stripText.textContent = state.pending
+      ? `No connection. ${count} saved on this device, will sync automatically.`
+      : 'No connection. Keep working, everything is saved on this device.';
+    action.hidden = true;
+  } else if (state.pending) {
+    strip.hidden = false;
+    strip.dataset.tone = state.syncing ? 'syncing' : 'pending';
+    stripIcon.innerHTML = icon('sync');
+    stripText.textContent = state.syncing ? `Uploading ${count}…` : `${count} waiting to upload${state.lastError ? ` (${state.lastError})` : ''}`;
+    action.hidden = state.syncing;
+  } else {
+    strip.hidden = true;
+  }
+
+  const badge = document.querySelector('.tab-badge');
+  badge.hidden = !state.pending;
+  badge.textContent = state.pending > 99 ? '99+' : state.pending;
+
+  pill.title = state.lastSync ? `Last synced ${timeAgo(state.lastSync)}` : 'Not synced yet';
+}
+
+async function boot() {
+  document.querySelectorAll('[data-icon]').forEach(el => {
+    el.innerHTML = icon(el.dataset.icon);
+  });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  if (!(await getMeta('deviceId'))) await setMeta('deviceId', uid());
+  ctx.config = await loadConfig();
+  ctx.guard = (await getMeta('guard')) || null;
+
+  subscribe(renderStatus);
+  document.getElementById('status').addEventListener('click', () => syncNow());
+  document.querySelector('.sync-strip-action').addEventListener('click', () => syncNow());
+  window.addEventListener('hashchange', route);
+
+  await initSync();
+  startLocationWatch();
+  route();
+}
+
+boot();

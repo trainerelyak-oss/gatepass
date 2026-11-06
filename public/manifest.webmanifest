@@ -1,0 +1,14 @@
+{
+  "name": "PatrolSync",
+  "short_name": "PatrolSync",
+  "description": "Patrols, inspections and incident reports that keep working with no signal.",
+  "start_url": "/#patrol",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f2ee",
+  "theme_color": "#13202b",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
