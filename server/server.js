@@ -11,7 +11,6 @@ const { openStore } = require('./store');
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const PHOTO_DIR = path.join(DATA_DIR, 'photos');
 const MAX_BODY = 40 * 1024 * 1024;
 
 const MIME = {
@@ -34,16 +33,16 @@ const ROUTES = {
   '/pass': 'pass.html'
 };
 
-fs.mkdirSync(PHOTO_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const site = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, 'data', 'site.json'), 'utf8'));
-const signingKey = loadSigningKey(DATA_DIR);
-const store = openStore(DATA_DIR);
-const db = loadDb();
-const watchlist = loadWatchlist();
+let store;
+let db;
+let signingKey;
+let watchlist;
 
-function loadDb() {
-  const data = store.load();
+async function loadDb() {
+  const data = await store.load();
   if (!data.epoch) store.setMeta('epoch', (data.epoch = crypto.randomUUID()));
   if (!data.salt) store.setMeta('salt', (data.salt = crypto.randomBytes(16).toString('hex')));
   return data;
@@ -126,7 +125,7 @@ async function storePhotos(record) {
     const bytes = Buffer.from(match[2], 'base64');
     const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
     const name = `${record.id.replace(/[^a-zA-Z0-9-]/g, '')}-${index}.${ext}`;
-    await fsp.writeFile(path.join(PHOTO_DIR, name), bytes);
+    await store.putBlob(name, bytes, `image/${match[1]}`);
     photos.push(`/photos/${name}`);
     const expected = record.photoHashes?.[index];
     if (expected) {
@@ -300,9 +299,7 @@ async function handleDemoReset(res) {
     for (const name of ['records', 'invites', 'reviews', 'devices']) store.clear(name);
     store.setMeta('epoch', db.epoch);
   });
-  for (const file of await fsp.readdir(PHOTO_DIR).catch(() => [])) {
-    await fsp.unlink(path.join(PHOTO_DIR, file)).catch(() => {});
-  }
+  await store.clearBlobs();
   sendJson(res, 200, { ok: true, epoch: db.epoch });
 }
 
@@ -498,7 +495,18 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     if (pathname.startsWith('/photos/')) {
-      return await serveFile(res, PHOTO_DIR, decodeURIComponent(pathname.slice('/photos/'.length)), 'public, max-age=86400');
+      const name = path.basename(decodeURIComponent(pathname.slice('/photos/'.length)));
+      const bytes = await store.getBlob(name);
+      if (!bytes) {
+        res.writeHead(404);
+        return res.end('Not found');
+      }
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
+        'Content-Length': bytes.length,
+        'Cache-Control': 'private, max-age=86400'
+      });
+      return res.end(bytes);
     }
     const relative = ROUTES[pathname] || decodeURIComponent(pathname);
     return await serveFile(res, PUBLIC_DIR, relative);
@@ -508,14 +516,27 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+async function main() {
+  store = await openStore(DATA_DIR);
+  db = await loadDb();
+  signingKey = loadSigningKey(DATA_DIR, db.signingKey, jwks => store.setMeta('signingKey', (db.signingKey = jwks)));
+  watchlist = loadWatchlist();
+  server.listen(PORT, onListening);
+}
+
+function onListening() {
   const addresses = Object.values(os.networkInterfaces())
     .flat()
     .filter(i => i && i.family === 'IPv4' && !i.internal)
     .map(i => `http://${i.address}:${PORT}`);
-  const relative = path.relative(process.cwd(), store.file);
-  console.log(`GatePass running · ${store.kind} database: ${relative.startsWith('..') ? store.file : relative}`);
+  const relative = path.relative(process.cwd(), store.location);
+  console.log(`GatePass running · ${store.kind} database: ${store.kind === 'Supabase' ? store.location : relative.startsWith('..') ? store.location : relative}`);
   console.log(`  Gate app:      http://localhost:${PORT}`);
   console.log(`  Control room:  http://localhost:${PORT}/dashboard`);
   for (const addr of addresses) console.log(`  On network: ${addr}`);
+}
+
+main().catch(err => {
+  console.error(`\nGatePass could not start: ${err.message}\n`);
+  process.exit(1);
 });

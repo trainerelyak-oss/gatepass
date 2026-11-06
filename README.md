@@ -52,7 +52,7 @@ npm start
 | Control room + issue passes | http://localhost:3000/dashboard |
 | Visitor pass | `/pass#<token>` (linked from the dashboard) |
 
-Data is stored in a SQLite database at `server/data/gatepass.sqlite`, using the SQLite engine built into Node (no packages to install). Older `db.json` data is imported automatically on first start. If your Node version has no built-in SQLite, the server falls back to a JSON file. Delete `server/data/` to reset everything, including the signing key.
+Running on your own computer, data is stored in a SQLite database at `server/data/gatepass.sqlite`, using the SQLite engine built into Node (no packages to install). Older `db.json` data is imported automatically. When `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set, it uses Supabase instead (see below). Delete `server/data/` to reset everything, including the signing key.
 
 ## Using it on several devices
 
@@ -60,7 +60,18 @@ Every gate phone and the dashboard talk to the same server, so they all need to 
 
 **Option 1: tunnel from your laptop (quickest).** Run `npm start`, then in a second terminal `npx localtunnel --port 3000`. Open the https link it prints on the laptop, go to `/dashboard`, click **Connect device**, and scan the QR code with each officer's phone.
 
-**Option 2: deploy (stable address).** Push the repo to GitHub and create a Render web service from it (the included `render.yaml` sets it up). Every device then uses the same `https://...onrender.com` address. On the free plan the database resets when the service restarts, which is fine for a demo.
+**Option 2: free cloud setup (permanent https address and database).** The app runs on Render's free plan and stores everything in a free Supabase database. Render's free plan wipes its disk on every restart, so GatePass keeps all data, the pass-signing key and evidence photos in Supabase instead.
+
+1. **Create the database.** Sign up at supabase.com → **New project** (any name, save the database password somewhere) → wait for it to finish setting up.
+2. **Create the tables.** In the project: **SQL Editor** → **New query** → paste the contents of `supabase/schema.sql` from this repo → **Run**. You should see "Success".
+3. **Copy two values.** **Project Settings → API Keys** (or Data API): copy the **Project URL** (`https://xxxx.supabase.co`) and a **secret key** (`sb_secret_...`). Never put the secret key in the browser or in GitHub.
+4. **Deploy the app.** Sign up at render.com with GitHub → **New → Blueprint** → pick this repository. Render reads `render.yaml` and asks for `SUPABASE_URL` and `SUPABASE_SECRET_KEY`: paste the two values → **Apply**.
+5. **Check the logs.** When the deploy finishes, the log shows `GatePass running · Supabase database`. If something is wrong it says exactly what (tables missing, wrong key or wrong URL).
+6. **Use it.** Open `https://<your-service>.onrender.com/dashboard` → **Connect device** → scan the QR code with each phone.
+
+Free-plan behaviour to know about: Render puts the app to sleep after 15 minutes with no traffic and takes about a minute to wake up (gate phones keep working offline meanwhile and sync once it's awake). Supabase pauses a free project after a week with no activity; resume it from the Supabase dashboard. Before a demo, open the dashboard a couple of minutes early to wake everything up.
+
+You can browse the data in Supabase's **Table Editor** (tables starting with `gp_`), including a readable `gp_visit_log` view.
 
 Phones that lose signal keep working and catch up when they reconnect. The dashboard's **Gate devices** panel shows which phones are connected and how many records each is still holding.
 
@@ -107,6 +118,8 @@ Gates, zones, visitor types, induction rules, item presets, temporary access lim
 
 ```
 server/server.js        HTTP server and API
+server/store.js         storage: SQLite, Supabase or JSON file
+supabase/schema.sql     tables for the free Supabase setup
 server/passes.js        signing keys, pass tokens, watchlist hashing
 server/visits.js        turns events into visits and alerts
 public/index.html       gate app

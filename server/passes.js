@@ -4,18 +4,19 @@ const path = require('path');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-function loadSigningKey(dataDir) {
+function loadSigningKey(dataDir, stored, save) {
   const file = path.join(dataDir, 'signing-key.json');
-  let privateJwk;
-  let publicJwk;
-  try {
-    ({ privateJwk, publicJwk } = JSON.parse(fs.readFileSync(file, 'utf8')));
-  } catch {
-    const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-    privateJwk = pair.privateKey.export({ format: 'jwk' });
-    publicJwk = pair.publicKey.export({ format: 'jwk' });
-    fs.writeFileSync(file, JSON.stringify({ privateJwk, publicJwk }), { mode: 0o600 });
+  let jwks = stored && stored.privateJwk && stored.publicJwk ? stored : null;
+  if (!jwks) {
+    try {
+      jwks = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      jwks = { privateJwk: pair.privateKey.export({ format: 'jwk' }), publicJwk: pair.publicKey.export({ format: 'jwk' }) };
+    }
+    save(jwks);
   }
+  const { privateJwk, publicJwk } = jwks;
   const privateKey = crypto.createPrivateKey({ key: privateJwk, format: 'jwk' });
   const keyId = crypto.createHash('sha256').update(publicJwk.x + publicJwk.y).digest('hex').slice(0, 8);
   return {
